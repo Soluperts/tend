@@ -20,3 +20,6 @@ pipecat-subagents/
 # tend runtime files
 /tmp/tend.log
 /tmp/tend.faults.log
+
+# Piper voice files (downloaded by Pipecat)
+*.onnx.json
