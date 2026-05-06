@@ -2,11 +2,9 @@
 
 from unittest.mock import AsyncMock, MagicMock
 
-import numpy as np
 import pytest
 from pipecat.frames.frames import (
     InputAudioRawFrame,
-    StartFrame,
     TranscriptionFrame,
     TTSSpeakFrame,
 )

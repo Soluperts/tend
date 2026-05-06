@@ -10,6 +10,8 @@ SleepPhraseGate sits post-STT (added in a later task).
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 from loguru import logger
 from pipecat.frames.frames import Frame, InputAudioRawFrame, TTSSpeakFrame
@@ -56,7 +58,6 @@ class OpenWakeWordGate(FrameProcessor):
         # Resolve model_name to a file path by searching pretrained models.
         # e.g. "hey_jarvis" matches "hey_jarvis_v0.1.onnx".
         all_paths = get_pretrained_model_paths()
-        import os
         matched = [
             p for p in all_paths
             if os.path.basename(p).startswith(self._model_name)
