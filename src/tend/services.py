@@ -114,3 +114,56 @@ def _make_tts(settings: Settings) -> tuple[TTSService, int]:
         ),
         rate,
     )
+
+
+# Brain LLM ---------------------------------------------------------------
+
+def _check_anthropic(api_key: str, model: str) -> str | None:
+    try:
+        r = httpx.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": model,
+                "max_tokens": 1,
+                "messages": [{"role": "user", "content": "."}],
+            },
+            timeout=10,
+        )
+    except Exception as e:
+        return f"network error: {e!r}"
+    if r.status_code == 200:
+        logger.info(f"Anthropic OK (model {model} responsive)")
+        return None
+    if r.status_code == 401:
+        return f"auth failed (401): {r.text[:300]}"
+    body = r.text[:400]
+    if "credit balance" in body.lower():
+        return f"credit balance too low: {body}"
+    return f"HTTP {r.status_code}: {body}"
+
+
+def _make_brain_llm(settings: Settings):
+    """Return an `AnthropicLLMService` if the preflight passes, else None.
+
+    Returning None signals to the caller that the brain should run in degraded
+    mode (echo) — see Brain.build_llm for that path.
+    """
+    if not settings.anthropic_api_key:
+        return None
+    err = _check_anthropic(settings.anthropic_api_key, settings.llm_model)
+    if err:
+        logger.warning(f"Anthropic preflight failed: {err}; brain will run in degraded mode")
+        return None
+    from pipecat.services.anthropic.llm import AnthropicLLMService
+    return AnthropicLLMService(
+        api_key=settings.anthropic_api_key,
+        settings=AnthropicLLMService.Settings(
+            model=settings.llm_model,
+            enable_prompt_caching=True,
+        ),
+    )

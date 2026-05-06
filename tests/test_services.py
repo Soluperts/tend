@@ -80,3 +80,34 @@ def test_make_tts_falls_back_when_quota_exhausted(monkeypatch):
     s = _settings(elevenlabs_api_key="el-test")
     tts, rate = _make_tts(s)
     assert tts.__class__.__name__ == "PiperTTSService"
+
+
+# Brain factory ------------------------------------------------------------
+
+def test_make_brain_llm_returns_anthropic_on_healthy_preflight(monkeypatch):
+    from tend.services import _make_brain_llm
+
+    fake_response = MagicMock(status_code=200)
+    monkeypatch.setattr(httpx, "post", MagicMock(return_value=fake_response))
+
+    s = _settings(anthropic_api_key="sk-test")
+    llm = _make_brain_llm(s)
+    assert llm.__class__.__name__ == "AnthropicLLMService"
+
+
+def test_make_brain_llm_returns_none_when_anthropic_unhealthy(monkeypatch):
+    """Brain factory returns None when no key OR preflight fails — caller decides what to do."""
+    from tend.services import _make_brain_llm
+
+    fake_response = MagicMock(status_code=401, text="invalid key")
+    monkeypatch.setattr(httpx, "post", MagicMock(return_value=fake_response))
+
+    s = _settings(anthropic_api_key="bad-key")
+    llm = _make_brain_llm(s)
+    assert llm is None
+
+
+def test_make_brain_llm_returns_none_when_no_key():
+    from tend.services import _make_brain_llm
+    s = _settings(anthropic_api_key=None)
+    assert _make_brain_llm(s) is None
