@@ -542,6 +542,38 @@ systemctl --user enable --now tend
 sudo loginctl enable-linger $USER
 ```
 
+### 10.4 Working against a local pipecat-subagents clone
+
+By default `pyproject.toml` pins `pipecat-ai-subagents == 0.4.0` from PyPI, and a normal `pip install -e .` pulls that. For development — reading internal APIs while building, debugging framework behaviour, prototyping additive changes for upstream PRs — we keep a local clone of `https://github.com/pipecat-ai/pipecat-subagents` at `./pipecat-subagents/` (gitignored, not part of the `tend` repo's git history). The clone retains its own `.git` pointing at upstream; contributors who want to PR back add their fork as a remote inside the clone.
+
+To override the PyPI install with the local clone:
+
+```bash
+pip install -e ./pipecat-subagents
+```
+
+To switch back to the pinned PyPI version:
+
+```bash
+pip install --force-reinstall "pipecat-ai-subagents==0.4.0"
+```
+
+PR workflow (typical):
+
+```bash
+cd pipecat-subagents
+git checkout -b my-fix
+# edit
+git push myfork my-fix
+gh pr create --repo pipecat-ai/pipecat-subagents
+```
+
+Constraints:
+
+- Any local modifications to the clone must remain **additive and non-breaking** to the framework's existing API. If a change requires breaking framework users, raise it as an upstream issue and discuss the design before coding.
+- The `tend` codebase always works against the pinned PyPI version. Don't introduce code paths that rely on un-merged changes in the local clone — that would silently break for anyone running `pip install -e .` cleanly.
+- If we discover a real need for an additive framework change, the workflow is: prototype in the clone → confirm `tend` benefits → open upstream PR → wait for merge or hold the change behind a thin shim until the next PyPI release.
+
 ## 11. Framework dependencies and assumptions
 
 This design relies on specific behaviours of pipecat-subagents 0.4.0. Calling them out so future upgrades can be evaluated against them.
@@ -564,6 +596,7 @@ If a future subagents version changes (1) or (3), this design needs to adapt. A 
 | New | `soul.md` — committed starter persona |
 | New | `tend.toml` — committed defaults |
 | Rewrite | `.env.example` — secrets only |
+| Update | `.gitignore` — add `pipecat-subagents/` (the dev-mode clone, see §10.4), `.superpowers/` (brainstorm scratch dir), and any TOML / soul files that shouldn't be checked in (none currently, but listed for completeness) |
 | Delete | `src/hasat/` |
 | New | `src/tend/` with the new module layout |
 | New | `deploy/tend.service` |
