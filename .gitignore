@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.env.local
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+models/
+*.onnx
+*.json.tts
+
+# pipecat-subagents dev clone (see spec §10.4)
+pipecat-subagents/
+# brainstorming scratch directory
+.superpowers/
+# tend runtime files
+/tmp/tend.log
+/tmp/tend.faults.log
