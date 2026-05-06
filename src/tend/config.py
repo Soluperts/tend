@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Type
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -61,9 +61,20 @@ class Settings(BaseSettings):
     log_path: str = "/tmp/tend.log"
 
     # Secrets (vendor conventions, no TEND_ prefix)
-    anthropic_api_key: str | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
-    deepgram_api_key: str | None = Field(default=None, validation_alias="DEEPGRAM_API_KEY")
-    elevenlabs_api_key: str | None = Field(default=None, validation_alias="ELEVENLABS_API_KEY")
+    # AliasChoices lets tests pass deepgram_api_key=... directly in Settings(...) while
+    # env-var loading still reads the canonical vendor names (ANTHROPIC_API_KEY, etc.)
+    anthropic_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ANTHROPIC_API_KEY", "anthropic_api_key"),
+    )
+    deepgram_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("DEEPGRAM_API_KEY", "deepgram_api_key"),
+    )
+    elevenlabs_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ELEVENLABS_API_KEY", "elevenlabs_api_key"),
+    )
 
     @classmethod
     def settings_customise_sources(
