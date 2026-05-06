@@ -1,0 +1,18 @@
+[Unit]
+Description=Tend personal voice assistant
+After=pipewire.service
+Wants=pipewire.service
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+[Service]
+Type=simple
+WorkingDirectory=%h/tend
+ExecStart=%h/tend/.venv/bin/python -m tend
+Restart=on-failure
+RestartSec=2s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
