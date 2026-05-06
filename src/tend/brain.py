@@ -14,7 +14,11 @@ from __future__ import annotations
 import asyncio
 
 from loguru import logger
+from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import (
+    LLMContextAggregatorPair,
+)
 from pipecat.services.llm_service import FunctionCallParams, LLMService
 from pipecat_subagents.agents import LLMAgent, tool
 from pipecat_subagents.bus import AgentBus
@@ -46,6 +50,7 @@ class Brain(LLMAgent):
         self._llm_service = llm_service
         self._session_manager = session_manager  # set later via attach_session_manager
         self._context = LLMContext()
+        self._aggregators: LLMContextAggregatorPair | None = None
 
     @property
     def context(self) -> LLMContext:
@@ -62,6 +67,19 @@ class Brain(LLMAgent):
                 "(or the brain should not be added to the runner if Anthropic preflight failed)."
             )
         return self._llm_service
+
+    async def build_pipeline(self) -> Pipeline:
+        """Build the brain's pipeline: user aggregator → LLM → assistant aggregator.
+
+        Replicates what LLMContextAgent does in pipecat-ai-subagents > 0.4.0.
+        """
+        self._llm = self.create_llm()
+        self._aggregators = LLMContextAggregatorPair(self._context)
+        return Pipeline([
+            self._aggregators.user(),
+            self._llm,
+            self._aggregators.assistant(),
+        ])
 
     async def reset_session(self, soul_text: str) -> None:
         """Replace the LLMContext's messages with a fresh system prompt only."""
