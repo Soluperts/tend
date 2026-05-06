@@ -1,7 +1,6 @@
 """Tests for tend.config.Settings — TOML, env, and default precedence."""
 
 import os
-from pathlib import Path
 
 import pytest
 
