@@ -10,12 +10,14 @@ SleepPhraseGate sits post-STT (added in a later task).
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 import numpy as np
 from loguru import logger
-from pipecat.frames.frames import Frame, InputAudioRawFrame, TTSSpeakFrame
+from pipecat.frames.frames import Frame, InputAudioRawFrame, TranscriptionFrame, TTSSpeakFrame, UserStartedSpeakingFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from rapidfuzz import fuzz
 
 
 class OpenWakeWordGate(FrameProcessor):
@@ -110,3 +112,68 @@ class OpenWakeWordGate(FrameProcessor):
             await self.push_frame(TTSSpeakFrame(self._ack_text), direction)
             await self._hub.activate_agent("brain")
         # frame dropped (no push_frame for the audio frame itself)
+
+
+class SleepPhraseGate(FrameProcessor):
+    """Post-STT text gate. Detects sleep phrase via fuzzy match; tracks silence timer."""
+
+    def __init__(
+        self,
+        *,
+        sleep_phrase: str,
+        fuzz_ratio: float,
+        timeout_s: float,
+        hub,
+        brain,
+    ):
+        super().__init__()
+        self._sleep_phrase = sleep_phrase.lower()
+        self._fuzz_ratio = fuzz_ratio
+        self._timeout_s = timeout_s
+        self._hub = hub
+        self._brain = brain
+        self._silence_task: asyncio.Task | None = None
+
+    def _is_sleep(self, text: str) -> bool:
+        ratio = fuzz.ratio(text.strip().lower(), self._sleep_phrase) / 100.0
+        return ratio >= self._fuzz_ratio
+
+    async def _silence_timer(self) -> None:
+        try:
+            await asyncio.sleep(self._timeout_s)
+            if self._brain.active:
+                logger.info(f"[sleep] silence timeout ({self._timeout_s}s) -> deactivating brain")
+                await self._hub.deactivate_agent("brain")
+        except asyncio.CancelledError:
+            pass
+
+    def _reset_silence_timer(self) -> None:
+        if self._silence_task and not self._silence_task.done():
+            self._silence_task.cancel()
+        self._silence_task = asyncio.create_task(self._silence_timer())
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+
+        if not self._brain.active:
+            await self.push_frame(frame, direction)
+            return
+
+        if isinstance(frame, UserStartedSpeakingFrame):
+            self._reset_silence_timer()
+            await self.push_frame(frame, direction)
+            return
+
+        if isinstance(frame, TranscriptionFrame):
+            if self._is_sleep(frame.text):
+                logger.info(f"[sleep] phrase match: {frame.text!r}")
+                if self._silence_task and not self._silence_task.done():
+                    self._silence_task.cancel()
+                await self._hub.deactivate_agent("brain")
+                return  # swallow
+            # Reset timer on any successful transcription too.
+            self._reset_silence_timer()
+            await self.push_frame(frame, direction)
+            return
+
+        await self.push_frame(frame, direction)
