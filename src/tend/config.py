@@ -1,0 +1,86 @@
+"""Settings for tend, loaded from class defaults, tend.toml, .env, and env vars.
+
+Precedence (highest first):
+1. Environment variables (TEND_<KEY> for project settings; vendor SDK conventions for secrets)
+2. .env file (gitignored, secrets only)
+3. tend.toml (committed defaults)
+4. Class defaults (in this file)
+"""
+
+from __future__ import annotations
+
+from typing import Type
+
+from pydantic import Field
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    TomlConfigSettingsSource,
+)
+
+
+class Settings(BaseSettings):
+    """All tend settings. Field names are lowercase; env vars are TEND_<UPPERCASE>."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="TEND_",
+        toml_file="tend.toml",
+        extra="ignore",
+    )
+
+    # LLM brain
+    llm_model: str = "claude-haiku-4-5"
+
+    # STT
+    deepgram_model: str = "nova-3-general"
+    whisper_model: str = "tiny.en"
+
+    # TTS
+    elevenlabs_voice_id: str = "EXAVITQu4vr4xnSDxMaL"
+    elevenlabs_model: str = "eleven_turbo_v2_5"
+    piper_voice: str = "en_US-ryan-high"
+
+    # Audio
+    sample_rate: int = 16000
+
+    # Wake / sleep
+    openwakeword_model: str = "hey_jarvis"
+    wake_threshold: float = 0.5
+    sleep_phrase: str = "goodbye jarvis"
+    sleep_fuzz_ratio: float = 0.85
+    awake_timeout_s: int = 30
+
+    # Day-session
+    daily_reset_time: str = "04:00"
+    timezone: str | None = None  # None → system default
+    soul_path: str = "soul.md"
+
+    # Logging
+    log_path: str = "/tmp/tend.log"
+
+    # Secrets (vendor conventions, no TEND_ prefix)
+    anthropic_api_key: str | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
+    deepgram_api_key: str | None = Field(default=None, validation_alias="DEEPGRAM_API_KEY")
+    elevenlabs_api_key: str | None = Field(default=None, validation_alias="ELEVENLABS_API_KEY")
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: Type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            TomlConfigSettingsSource(settings_cls),
+            file_secret_settings,
+        )
+
+
+settings = Settings()

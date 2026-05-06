@@ -1,0 +1,30 @@
+# tend default settings — overridable by .env (secrets) and TEND_* env vars
+
+# LLM brain
+llm_model = "claude-haiku-4-5"
+
+# STT
+deepgram_model = "nova-3-general"
+whisper_model = "tiny.en"
+
+# TTS
+elevenlabs_voice_id = "EXAVITQu4vr4xnSDxMaL"
+elevenlabs_model = "eleven_turbo_v2_5"
+piper_voice = "en_US-ryan-high"
+
+# Audio
+sample_rate = 16000
+
+# Wake / sleep
+openwakeword_model = "hey_jarvis"
+wake_threshold = 0.5
+sleep_phrase = "goodbye jarvis"
+sleep_fuzz_ratio = 0.85
+awake_timeout_s = 30
+
+# Day-session
+daily_reset_time = "04:00"
+soul_path = "soul.md"
+
+# Logging
+log_path = "/tmp/tend.log"
