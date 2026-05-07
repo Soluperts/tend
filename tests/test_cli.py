@@ -93,3 +93,51 @@ def test_cli_sessions_cat_emits_bytes(capsys, store_with_rows):
     main(["sessions", "cat", "bbbb2222"])
     out = capsys.readouterr().out
     assert "assistant" in out
+
+
+def test_cli_snapshot_writes_file(tmp_path, monkeypatch, capsys):
+    """`tend snapshot` writes ~/.tend/claude-env.md with all expected sections."""
+    from tend import cli
+
+    root = tmp_path / "tend-home"
+    root.mkdir()
+    monkeypatch.setattr(cli, "_default_root", lambda: root)
+
+    # Stub out claude_env_data so we don't shell out in tests.
+    monkeypatch.setattr(cli, "_claude_version", lambda: "claude 1.2.3")
+    monkeypatch.setattr(cli, "_mcp_list_markdown",
+                        lambda: "| sheets | mcp__sheets__ | user | running |")
+
+    fake_home = tmp_path / "home"
+    (fake_home / ".claude" / "skills" / "demo").mkdir(parents=True)
+    (fake_home / ".claude" / "agents").mkdir(parents=True)
+    (fake_home / ".claude" / "commands").mkdir(parents=True)
+    (fake_home / ".claude" / "agents" / "agent-x.md").write_text("x")
+    monkeypatch.setattr(cli, "_claude_home", lambda: fake_home / ".claude")
+
+    cli.main(["snapshot"])
+    out = capsys.readouterr().out
+    target = root / "claude-env.md"
+    assert target.exists()
+    assert "Wrote" in out
+    text = target.read_text()
+    assert "MCP servers" in text
+    assert "Skills" in text
+    assert "demo" in text
+    assert "Agents" in text
+    assert "agent-x" in text
+    assert "Suggested tend.toml additions" in text
+    assert "claude 1.2.3" in text
+
+
+def test_cli_snapshot_handles_missing_claude(monkeypatch, tmp_path, capsys):
+    from tend import cli
+
+    monkeypatch.setattr(cli, "_default_root", lambda: tmp_path / "tend-home")
+    monkeypatch.setattr("shutil.which", lambda _: None)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["snapshot"])
+    err = capsys.readouterr().err
+    assert exc.value.code == 1
+    assert "claude" in err.lower()

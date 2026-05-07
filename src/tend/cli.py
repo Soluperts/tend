@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 from tend.sessions import SessionStore
@@ -139,6 +142,120 @@ def _print_event(line: str, raw: bool) -> None:
         print(f"[{t}] {json.dumps(ev)[:200]}")
 
 
+def _claude_home() -> Path:
+    return Path.home() / ".claude"
+
+
+def _claude_version() -> str:
+    r = subprocess.run(
+        ["claude", "--version"], capture_output=True, text=True, timeout=10,
+    )
+    if r.returncode != 0:
+        return "(unknown)"
+    return r.stdout.strip().splitlines()[0] if r.stdout else "(unknown)"
+
+
+def _mcp_table(servers) -> str:
+    lines = ["| Name | Tool prefix | Scope | Status |", "|---|---|---|---|"]
+    for s in servers or []:
+        name = s.get("name", "?")
+        scope = s.get("scope", "?")
+        status = s.get("status", "?")
+        prefix = f"mcp__{name.replace('-', '_')}__"
+        lines.append(f"| {name} | {prefix} | {scope} | {status} |")
+    if len(lines) == 2:
+        return "_(no MCP servers configured)_"
+    return "\n".join(lines)
+
+
+def _mcp_list_markdown() -> str:
+    """Run `claude mcp list` and return a markdown table. JSON form preferred."""
+    j = subprocess.run(
+        ["claude", "mcp", "list", "--json"],
+        capture_output=True, text=True, timeout=10,
+    )
+    if j.returncode == 0:
+        try:
+            data = json.loads(j.stdout)
+            servers = data.get("servers") if isinstance(data, dict) else data
+            return _mcp_table(servers)
+        except json.JSONDecodeError:
+            pass
+    t = subprocess.run(
+        ["claude", "mcp", "list"], capture_output=True, text=True, timeout=10,
+    )
+    if t.returncode == 0:
+        return f"```\n{t.stdout.strip() or '(empty)'}\n```"
+    return "_(`claude mcp list` failed)_"
+
+
+def _list_dir_md(d: Path) -> str:
+    if not d.exists():
+        return "_(none configured)_"
+    items = sorted(
+        p.stem for p in d.iterdir()
+        if p.is_dir() or p.suffix == ".md"
+    )
+    return "\n".join(f"- {it}" for it in items) if items else "_(none configured)_"
+
+
+def cmd_snapshot(args) -> None:
+    if not shutil.which("claude"):
+        print(
+            "`claude` CLI not found on PATH. Install Claude Code first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    home = _claude_home()
+    sections: list[str] = []
+    sections.append("# Claude Code Environment Snapshot\n")
+    sections.append(
+        f"Generated: {datetime.now().isoformat(timespec='minutes')} "
+        f"(claude --version: {_claude_version()})\n"
+    )
+    sections.append("## MCP servers (`claude mcp list`)\n")
+    sections.append(_mcp_list_markdown())
+    sections.append("")
+
+    for label, sub in [("Skills", "skills"), ("Agents", "agents"), ("Commands", "commands")]:
+        sections.append(f"## {label} ({home}/{sub}/)\n")
+        sections.append(_list_dir_md(home / sub))
+        sections.append("")
+
+    sections.append("## Native Claude Code tools\n")
+    sections.append(
+        "Read, Edit, Write, Bash, Grep, Glob, WebSearch, WebFetch, "
+        "NotebookEdit, Task, TodoWrite\n"
+    )
+
+    sections.append("## Suggested tend.toml additions\n")
+    sections.append(
+        "For a meal-planning worker (replace MCP names with what shows above):\n\n"
+        "```toml\n"
+        "[workers.meal_plan]\n"
+        'model = "claude-sonnet-4-6"\n'
+        'setting_sources = "user"\n'
+        "allowed_tools = [\n"
+        '  "mcp__google_calendar__*",\n'
+        '  "mcp__google_sheets__*",\n'
+        "]\n"
+        "```\n\n"
+        "For a coding worker with full tool access:\n\n"
+        "```toml\n"
+        "[workers.coding]\n"
+        'model = "claude-opus-4-7"\n'
+        'setting_sources = "user,project,local"\n'
+        'allowed_tools = ["Read", "Edit", "Write", "Bash", "Grep", "Glob", "mcp__*"]\n'
+        "```\n"
+    )
+
+    out = _default_root() / "claude-env.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(sections))
+    print(f"Wrote {out}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="tend")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -162,6 +279,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     pc = sessions.add_parser("cat"); pc.set_defaults(func=cmd_sessions_cat)
     pc.add_argument("session_id")
+
+    psnap = sub.add_parser("snapshot", help="Snapshot the local Claude Code environment.")
+    psnap.set_defaults(func=cmd_snapshot)
 
     return p
 
