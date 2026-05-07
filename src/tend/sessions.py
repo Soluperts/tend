@@ -86,10 +86,13 @@ class SessionStore:
         error: str | None = None,
     ) -> SessionEntry:
         def patch(idx: dict) -> None:
-            row = idx.setdefault(session_id, {})
+            if session_id not in idx:
+                raise KeyError(f"No session {session_id!r} in index")
+            row = idx[session_id]
+            now = _now_ms()
             row["status"] = status
-            row["ended_at"] = _now_ms()
-            row["last_interaction_at"] = _now_ms()
+            row["ended_at"] = now
+            row["last_interaction_at"] = now
             if spoken_summary is not None:
                 row["spoken_summary"] = spoken_summary
             if usage:
@@ -102,7 +105,13 @@ class SessionStore:
     def list_recent(self, *, limit: int = 10) -> list[SessionEntry]:
         idx = self._read_index()
         rows = sorted(idx.values(), key=lambda r: r.get("started_at", 0), reverse=True)
-        return [self._entry_from_dict(r) for r in rows[:limit]]
+        result: list[SessionEntry] = []
+        for r in rows[:limit]:
+            try:
+                result.append(self._entry_from_dict(r))
+            except (TypeError, KeyError):
+                pass  # skip corrupt rows; do not crash the caller
+        return result
 
     def get(self, session_id: str) -> SessionEntry | None:
         idx = self._read_index()

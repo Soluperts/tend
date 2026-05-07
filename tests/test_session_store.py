@@ -55,9 +55,19 @@ def test_complete_failure_records_error(store):
     assert len(raw["x"]["error"]) <= 500
 
 
+def test_complete_unknown_session_id_raises(store):
+    with pytest.raises(KeyError):
+        store.complete("never-started", status="done")
+    # Index must remain empty — no phantom row written.
+    rows = store.list_recent(limit=10)
+    assert rows == []
+
+
 def test_list_recent_sorts_descending_by_started_at(store):
-    store.start(session_id="old", worker="w", request="r", cwd=None)
-    store.start(session_id="new", worker="w", request="r", cwd=None)
+    from unittest.mock import patch
+    with patch("tend.sessions._now_ms", side_effect=[1000, 1000, 2000, 2000]):
+        store.start(session_id="old", worker="w", request="r", cwd=None)
+        store.start(session_id="new", worker="w", request="r", cwd=None)
     rows = store.list_recent(limit=10)
     assert [r.session_id for r in rows] == ["new", "old"]
 
@@ -67,6 +77,12 @@ def test_list_recent_respects_limit(store):
         store.start(session_id=f"s{i}", worker="w", request="r", cwd=None)
     rows = store.list_recent(limit=2)
     assert len(rows) == 2
+
+
+def test_get_returns_entry_or_none(store):
+    store.start(session_id="z", worker="w", request="r", cwd=None)
+    assert store.get("z") is not None
+    assert store.get("missing") is None
 
 
 def test_write_system_prompt_creates_file(store):
