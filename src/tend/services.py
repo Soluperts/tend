@@ -86,14 +86,20 @@ def _check_elevenlabs(api_key: str) -> str | None:
 
 
 def _make_tts(settings: Settings) -> tuple[TTSService, int]:
-    """Return (service, native_sample_rate)."""
+    """Return (service, output_sample_rate).
+
+    Output rate is pinned to settings.sample_rate so the local audio transport
+    can play it without resampling (USB mic-arrays like the reSpeaker are
+    typically rate-locked to 16 kHz). ElevenLabs serves PCM at the requested
+    rate; Piper resamples internally from the voice's native rate.
+    """
+    rate = settings.sample_rate
     if settings.elevenlabs_api_key:
         err = _check_elevenlabs(settings.elevenlabs_api_key)
         if err:
             logger.warning(f"ElevenLabs preflight failed: {err}; falling back to local Piper")
         else:
             from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
-            rate = 24000
             return (
                 ElevenLabsTTSService(
                     api_key=settings.elevenlabs_api_key,
@@ -106,7 +112,6 @@ def _make_tts(settings: Settings) -> tuple[TTSService, int]:
                 rate,
             )
     from pipecat.services.piper.tts import PiperTTSService
-    rate = 22050
     return (
         PiperTTSService(
             settings=PiperTTSService.Settings(voice=settings.piper_voice),

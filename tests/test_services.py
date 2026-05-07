@@ -47,10 +47,10 @@ def test_make_stt_falls_back_to_whisper_on_401(monkeypatch):
 
 def test_make_tts_returns_piper_when_no_elevenlabs_key():
     from tend.services import _make_tts
-    s = _settings(elevenlabs_api_key=None)
+    s = _settings(elevenlabs_api_key=None, sample_rate=16000)
     tts, rate = _make_tts(s)
     assert tts.__class__.__name__ == "PiperTTSService"
-    assert rate == 22050
+    assert rate == 16000
 
 
 def test_make_tts_returns_elevenlabs_on_healthy_preflight(monkeypatch):
@@ -62,10 +62,10 @@ def test_make_tts_returns_elevenlabs_on_healthy_preflight(monkeypatch):
     )
     monkeypatch.setattr(httpx, "get", MagicMock(return_value=fake_response))
 
-    s = _settings(elevenlabs_api_key="el-test")
+    s = _settings(elevenlabs_api_key="el-test", sample_rate=16000)
     tts, rate = _make_tts(s)
     assert tts.__class__.__name__ == "ElevenLabsTTSService"
-    assert rate == 24000
+    assert rate == 16000
 
 
 def test_make_tts_falls_back_when_quota_exhausted(monkeypatch):
