@@ -1,6 +1,7 @@
 """Tests for ClaudeCliWorker building blocks. Subprocess is injected so
 no actual `claude` is spawned in unit tests."""
 
+import json
 from pathlib import Path
 
 from tend.workers.claude_cli import (
@@ -100,10 +101,6 @@ def test_clear_env_includes_critical_keys():
     assert must_clear.issubset(set(CLAUDE_CLI_CLEAR_ENV))
 
 
-import asyncio
-import json
-
-
 def _async_iter(lines: list[bytes]):
     async def gen():
         for line in lines:
@@ -155,5 +152,7 @@ async def test_consume_stream_handles_no_assistant_text(tmp_path):
     from tend.workers.claude_cli import _consume_stream
 
     events = [json.dumps({"type": "result", "subtype": "success"}).encode() + b"\n"]
-    final, _ = await _consume_stream(_async_iter(events), tmp_path / "t.jsonl")
+    final, usage = await _consume_stream(_async_iter(events), tmp_path / "t.jsonl")
     assert final == ""
+    # usage always carries at least total_cost_usd, even when absent from event
+    assert usage == {"total_cost_usd": None}
