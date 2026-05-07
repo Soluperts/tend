@@ -11,13 +11,22 @@ from __future__ import annotations
 
 from typing import Type
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     TomlConfigSettingsSource,
 )
+
+
+class WorkerConfig(BaseModel):
+    """Per-worker overrides loaded from `[workers.<name>]` blocks in tend.toml."""
+
+    model: str | None = None
+    setting_sources: str = "user"
+    allowed_tools: list[str] = []
+    mcp_config_path: str | None = None
 
 
 class Settings(BaseSettings):
@@ -59,6 +68,9 @@ class Settings(BaseSettings):
 
     # Logging
     log_path: str = "/tmp/tend.log"
+
+    # Per-worker config blocks. Keys are worker names; values are WorkerConfig.
+    workers: dict[str, WorkerConfig] = {}
 
     # Secrets (vendor conventions, no TEND_ prefix)
     # AliasChoices lets tests pass deepgram_api_key=... directly in Settings(...) while
