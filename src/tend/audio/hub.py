@@ -7,6 +7,7 @@ routes voice frames to/from Brain. Brain is added as a child of Hub at runtime.
 from __future__ import annotations
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.services.stt_service import STTService
@@ -51,10 +52,16 @@ class Hub(BaseAgent):
             )
         )
 
+        # Hub-originated TTSSpeakFrames (e.g. the wake-word ack "Yes?") need to
+        # reach the local TTS service downstream, not be redirected to the bus.
+        # The bridge would otherwise swallow them — see pipecat_subagents
+        # BusBridgeProcessor.process_frame, which sends every non-lifecycle frame
+        # to the bus instead of forwarding it.
         bridge = BusBridgeProcessor(
             bus=self.bus,
             agent_name=self.name,
             bridge="voice",
+            exclude_frames=(TTSSpeakFrame,),
             name=f"{self.name}::voice-bridge",
         )
 
