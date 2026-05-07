@@ -21,7 +21,7 @@ dev = [
 ]
 
 [project.scripts]
-tend = "tend.__main__:main"
+tend = "tend.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]

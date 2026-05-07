@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import faulthandler
 import sys
+from pathlib import Path
 
 from loguru import logger
 from pipecat_subagents.runner import AgentRunner
@@ -22,8 +23,10 @@ from pipecat_subagents.runner import AgentRunner
 from tend.audio.hub import Hub
 from tend.brain import Brain
 from tend.config import settings
+from tend.preflight import claude_cli_preflight
 from tend.services import _make_brain_llm, _make_stt, _make_tts
 from tend.session import SessionManager
+from tend.sessions import SessionStore
 
 
 def _setup_logging() -> None:
@@ -39,6 +42,9 @@ def _setup_logging() -> None:
 async def _run() -> None:
     runner = AgentRunner()
 
+    claude_cli_preflight()  # logs warning on failure; non-fatal
+    store = SessionStore(root=Path.home() / ".tend")
+
     llm_service = _make_brain_llm(settings)
     if llm_service is None:
         logger.error(
@@ -48,7 +54,7 @@ async def _run() -> None:
         # We still construct Brain so the rest of the stack is exercisable;
         # the build_llm path will raise if accessed. Acceptable degraded mode for v1.
 
-    brain = Brain("brain", bus=runner.bus, llm_service=llm_service)
+    brain = Brain("brain", bus=runner.bus, llm_service=llm_service, store=store)
 
     stt = _make_stt(settings)
     tts, tts_rate = _make_tts(settings)
