@@ -17,9 +17,9 @@ models/
 pipecat-subagents/
 # brainstorming scratch directory
 .superpowers/
-# tend runtime files
-/tmp/tend.log
-/tmp/tend.faults.log
+# tend runtime files (whether under /tmp or the working dir)
+tend.log
+tend.faults.log
 
 # Piper voice files (downloaded by Pipecat)
 *.onnx.json
