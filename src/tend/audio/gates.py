@@ -19,6 +19,10 @@ from pipecat.frames.frames import Frame, InputAudioRawFrame, TranscriptionFrame,
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from rapidfuzz import fuzz
 
+# openWakeWord's expected window: 80 ms @ 16 kHz. Its hard minimum is 400 samples (25 ms);
+# below that, predict() raises. Pipecat's transport emits much smaller chunks, so we buffer.
+_OWW_CHUNK_SAMPLES = 1280
+
 
 class OpenWakeWordGate(FrameProcessor):
     """Pre-STT audio gate driven by openWakeWord.
@@ -52,6 +56,7 @@ class OpenWakeWordGate(FrameProcessor):
         self._brain = brain
         self._ack_text = ack_text
         self._model = self._build_model()
+        self._buffer = np.empty(0, dtype=np.int16)
 
     def _build_model(self):
         from openwakeword import get_pretrained_model_paths
@@ -103,14 +108,20 @@ class OpenWakeWordGate(FrameProcessor):
             await self.push_frame(frame, direction)
             return
 
-        # Brain inactive: feed audio to OWW model, drop the frame regardless.
+        # Brain inactive: buffer audio and feed full chunks to OWW. Drop the frame regardless.
         samples = np.frombuffer(frame.audio, dtype=np.int16)
-        scores = self._model.predict(samples)
-        score = self._get_score(scores)
-        if score >= self._threshold:
-            logger.info(f"[wake] openWakeWord triggered (score={score:.3f})")
-            await self.push_frame(TTSSpeakFrame(self._ack_text), direction)
-            await self._hub.activate_agent("brain")
+        self._buffer = np.concatenate([self._buffer, samples])
+        while len(self._buffer) >= _OWW_CHUNK_SAMPLES:
+            chunk = self._buffer[:_OWW_CHUNK_SAMPLES]
+            self._buffer = self._buffer[_OWW_CHUNK_SAMPLES:]
+            scores = self._model.predict(chunk)
+            score = self._get_score(scores)
+            if score >= self._threshold:
+                logger.info(f"[wake] openWakeWord triggered (score={score:.3f})")
+                await self.push_frame(TTSSpeakFrame(self._ack_text), direction)
+                await self._hub.activate_agent("brain")
+                self._buffer = np.empty(0, dtype=np.int16)
+                break
         # frame dropped (no push_frame for the audio frame itself)
 
 

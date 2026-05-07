@@ -95,6 +95,30 @@ async def test_forwards_audio_when_brain_active(mock_oww_model, mock_brain, mock
     mock_hub.activate_agent.assert_not_called()
 
 
+async def test_buffers_subwindow_frames_until_chunk_complete(mock_oww_model, mock_brain, mock_hub):
+    """Pipecat transport delivers frames smaller than openWakeWord's window — gate must buffer."""
+    from tend.audio.gates import OpenWakeWordGate
+    gate = OpenWakeWordGate(
+        model_name="hey_jarvis", threshold=0.5, hub=mock_hub, brain=mock_brain
+    )
+    gate._model = mock_oww_model
+
+    # 320-sample frames (= 20 ms @ 16 kHz). Need 4 to reach the 1280-sample window.
+    small_frame = lambda: InputAudioRawFrame(
+        audio=b"\x00\x00" * 320, sample_rate=16000, num_channels=1
+    )
+    captured = []
+
+    for _ in range(3):
+        await _drive(gate, small_frame(), captured)
+    mock_oww_model.predict.assert_not_called()
+
+    await _drive(gate, small_frame(), captured)
+    mock_oww_model.predict.assert_called_once()
+    chunk = mock_oww_model.predict.call_args.args[0]
+    assert len(chunk) == 1280
+
+
 async def test_non_audio_frames_pass_through(mock_oww_model, mock_brain, mock_hub):
     from tend.audio.gates import OpenWakeWordGate
     gate = OpenWakeWordGate(
