@@ -34,3 +34,6 @@ log_path = "tend.log"
 model = "claude-opus-4-7"
 setting_sources = "user,project,local"
 allowed_tools = ["Read", "Edit", "Write", "Bash", "Grep", "Glob"]
+# Persistent workspace where deskclaw builds things. All coding tasks
+# share this directory — no per-job isolation.
+workspace_dir = "~/.tend/workspace"

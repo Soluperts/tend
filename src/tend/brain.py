@@ -146,21 +146,22 @@ class Brain(LLMAgent):
         return "Starting fresh."
 
     @tool
-    async def code_in(self, params: FunctionCallParams, repo: str, request: str):
-        """Dispatch a coding task to the background coding worker.
+    async def code_in(self, params: FunctionCallParams, request: str):
+        """Dispatch a build/coding task to the deskclaw coding worker.
+
+        Use this when you need a small tool, script, parser, or glue
+        component built so you can complete another workflow. Code is
+        written into the deskclaw workspace, not into arbitrary user repos.
 
         Args:
-            repo (str): Absolute path to the git repository to operate on.
-            request (str): What you want done, in plain English.
+            request (str): What you want built, in plain English.
         """
         if self._store is None:
             # Without a store, _ensure_coding_worker no-ops and request_task
             # would fire at a worker that doesn't exist. Fail loud and clear.
             return "Session store unavailable — cannot dispatch coding tasks."
         await self._ensure_coding_worker()
-        await self.request_task(
-            "coding", payload={"repo": repo, "request": request},
-        )
+        await self.request_task("coding", payload={"request": request})
         return f"Got it. I'll work on '{request[:80]}' and let you know when it's ready."
 
     @tool
@@ -231,7 +232,6 @@ class Brain(LLMAgent):
             match.worker,
             payload={
                 "request": follow_up,
-                "repo": match.cwd or "",
                 "resume_session_id": match.session_id,
             },
         )

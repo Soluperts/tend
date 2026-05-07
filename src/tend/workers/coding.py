@@ -1,15 +1,22 @@
-"""CodingWorker — runs `claude` in a per-job git worktree to do coding tasks.
+"""CodingWorker — runs `claude` inside the persistent deskclaw workspace.
 
-Brain dispatches via `request_task('coding', payload={'repo': ..., 'request': ...})`.
-For follow-ups, payload may also include `resume_session_id`, in which case
-the worker resumes the existing claude session and reuses its worktree.
+DeskClaw's main job isn't coding — it's meal plans, fitness, routines,
+reminders, dashboards. The coding worker is the escape hatch: when the
+assistant decides it needs to *build* something to enable a workflow
+(a small script, a parser, a glue tool), it dispatches a coding task here.
+
+All coding tasks share a single persistent workspace directory (default
+`~/.tend/workspace/`). There is no per-job isolation — DeskClaw accumulates
+everything it builds in that one place. Resumes reuse the same cwd; claude
+itself remembers per-session state via its `--resume` flag.
+
+Brain dispatches via `request_task('coding', payload={'request': ...})`.
+For follow-ups, payload also includes `resume_session_id`.
 """
 
 from __future__ import annotations
 
 import asyncio
-import subprocess
-import uuid
 from pathlib import Path
 
 from loguru import logger
@@ -25,16 +32,14 @@ from tend.sessions import SessionStore
 from tend.workers.claude_cli import ClaudeCliWorker, ClaudeRunSpec
 
 
-def default_worktree_factory(repo: Path, session_id: str) -> Path:
-    """Create `~/.tend/worktrees/<session_id>/` as a git worktree off `repo`."""
-    target = Path.home() / ".tend" / "worktrees" / session_id
-    target.parent.mkdir(parents=True, exist_ok=True)
-    branch = f"tend/coding/{session_id[:12]}"
-    subprocess.run(
-        ["git", "worktree", "add", "-b", branch, str(target), "HEAD"],
-        cwd=str(repo), check=True,
-    )
-    return target
+DEFAULT_WORKSPACE = Path.home() / ".tend" / "workspace"
+
+
+def _resolve_workspace(config: WorkerConfig) -> Path:
+    raw = config.workspace_dir
+    if not raw:
+        return DEFAULT_WORKSPACE
+    return Path(raw).expanduser()
 
 
 class CodingWorker(ClaudeCliWorker):
@@ -46,13 +51,18 @@ class CodingWorker(ClaudeCliWorker):
         store: SessionStore,
         config: WorkerConfig,
         subprocess_factory=None,
-        worktree_factory=default_worktree_factory,
+        workspace_dir: Path | None = None,
     ):
         super().__init__(
             name, bus=bus, store=store, subprocess_factory=subprocess_factory,
         )
         self._config = config
-        self._worktree_factory = worktree_factory
+        self._workspace_dir = workspace_dir or _resolve_workspace(config)
+
+    def _ensure_workspace(self) -> Path:
+        """Make sure the workspace dir exists. Idempotent."""
+        self._workspace_dir.mkdir(parents=True, exist_ok=True)
+        return self._workspace_dir
 
     @task
     async def code_in(self, message) -> None:
@@ -66,32 +76,15 @@ class CodingWorker(ClaudeCliWorker):
 
         # Phase 1: do the work. Failures here trigger _announce_error.
         try:
-            if resume_id:
-                # Resuming: claude already knows the worktree from the prior turn.
-                spec = ClaudeRunSpec(
-                    prompt=request,
-                    resume_session_id=resume_id,
-                    allowed_tools=self._config.allowed_tools,
-                    setting_sources=self._config.setting_sources,
-                    model=self._config.model,
-                )
-            else:
-                repo = Path(message.payload["repo"]).expanduser()
-                session_id = uuid.uuid4().hex
-                # Worktree creation can take 50–200 ms on a Pi 5 (longer on
-                # cold cache). Hand it to the executor so the asyncio loop
-                # keeps running for audio / VAD / STT.
-                worktree = await asyncio.to_thread(
-                    self._worktree_factory, repo, session_id,
-                )
-                spec = ClaudeRunSpec(
-                    prompt=request,
-                    session_id=session_id,
-                    allowed_tools=self._config.allowed_tools,
-                    setting_sources=self._config.setting_sources,
-                    model=self._config.model,
-                    cwd=worktree,
-                )
+            workspace = await asyncio.to_thread(self._ensure_workspace)
+            spec = ClaudeRunSpec(
+                prompt=request,
+                resume_session_id=resume_id,
+                allowed_tools=self._config.allowed_tools,
+                setting_sources=self._config.setting_sources,
+                model=self._config.model,
+                cwd=workspace,
+            )
             entry = await self.run_claude(spec)
         except Exception as e:
             logger.exception("CodingWorker failed")
@@ -119,7 +112,7 @@ class CodingWorker(ClaudeCliWorker):
             "spoken": spoken,
             "context": {
                 "session_id": entry.session_id,
-                "worktree": entry.cwd,
+                "workspace": entry.cwd,
                 "request": entry.request,
             },
         })

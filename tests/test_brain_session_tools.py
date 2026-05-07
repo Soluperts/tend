@@ -64,11 +64,13 @@ async def test_code_in_dispatches_task(brain):
     """code_in calls request_task on the brain (fire-and-forget)."""
     brain.request_task = AsyncMock()
     brain._ensure_coding_worker = AsyncMock()
-    out = await brain.code_in(MagicMock(), repo="/home/pi/hasat", request="fix it")
+    out = await brain.code_in(MagicMock(), request="fix it")
     brain.request_task.assert_awaited_once()
     args, kwargs = brain.request_task.await_args
     assert args[0] == "coding"
     assert kwargs["payload"]["request"] == "fix it"
+    # repo is no longer part of the payload — workspace is implicit.
+    assert "repo" not in kwargs["payload"]
     assert "i'll" in out.lower() or "got it" in out.lower()
 
 
@@ -83,6 +85,7 @@ async def test_continue_session_dispatches_with_resume_id(brain, store):
     payload = brain.request_task.await_args.kwargs["payload"]
     assert payload.get("resume_session_id") == "prev"
     assert "rename y to z" in payload["request"]
+    assert "repo" not in payload
     assert "follow" in out.lower() or "got it" in out.lower()
 
 
@@ -127,7 +130,7 @@ async def test_code_in_no_store_does_not_dispatch(brain_no_store):
     coding worker — it should fail loud instead."""
     brain_no_store.request_task = AsyncMock()
     out = await brain_no_store.code_in(
-        MagicMock(), repo="/home/pi/hasat", request="anything",
+        MagicMock(), request="anything",
     )
     brain_no_store.request_task.assert_not_awaited()
     assert "unavailable" in out.lower()

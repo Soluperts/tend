@@ -27,6 +27,9 @@ class WorkerConfig(BaseModel):
     setting_sources: str = "user"
     allowed_tools: list[str] = []
     mcp_config_path: str | None = None
+    # Coding worker: persistent workspace where claude builds things.
+    # Resolved against `~` if it starts with `~`. None → ~/.tend/workspace/.
+    workspace_dir: str | None = None
 
 
 class Settings(BaseSettings):
