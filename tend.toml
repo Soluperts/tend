@@ -18,7 +18,7 @@ sample_rate = 16000
 # Wake / sleep
 openwakeword_model = "hey_jarvis"
 wake_threshold = 0.5
-sleep_phrase = "goodbye jarvis"
+sleep_phrase = "goodbye"
 sleep_fuzz_ratio = 0.85
 awake_timeout_s = 30
 
