@@ -17,7 +17,7 @@ import os
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import AsyncIterator
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 from pipecat_subagents.agents import BaseAgent
 from pipecat_subagents.bus import AgentBus
@@ -167,7 +167,7 @@ class ClaudeCliWorker(BaseAgent):
         *,
         bus: AgentBus,
         store: SessionStore,
-        subprocess_factory=None,
+        subprocess_factory: Callable[..., Awaitable[Any]] | None = None,
     ):
         super().__init__(name, bus=bus)
         self._store = store
@@ -200,46 +200,62 @@ class ClaudeCliWorker(BaseAgent):
         env = _scrubbed_env(dict(os.environ))
 
         # 4. Spawn.
+        proc = None
         try:
-            proc = await self._subprocess_factory(
-                *args,
-                cwd=str(spec.cwd) if spec.cwd else None,
-                env=env,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        except Exception as e:
-            self._store.complete(session_id, status="failed", error=f"spawn failed: {e}")
-            raise
-
-        # 5. Send prompt on stdin and close it.
-        try:
-            proc.stdin.write(spec.prompt.encode())
-            await proc.stdin.drain()
-            proc.stdin.close()
-        except Exception:
-            pass  # claude may have exited already; let stream consumption decide.
-
-        # 6. Stream + persist final outcome.
-        try:
-            transcript = self._store.transcript_path(session_id)
-            final_text, usage = await _consume_stream(proc.stdout, transcript)
-            rc = await proc.wait()
-            if rc != 0:
-                msg = f"claude exited with code {rc}"
-                self._store.complete(session_id, status="failed", error=msg)
-                raise RuntimeError(msg)
-            return self._store.complete(
-                session_id, status="done",
-                spoken_summary=final_text, usage=usage,
-            )
-        except RuntimeError:
-            raise
-        except Exception as e:
             try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-            self._store.complete(session_id, status="failed", error=str(e))
-            raise
+                proc = await self._subprocess_factory(
+                    *args,
+                    cwd=str(spec.cwd) if spec.cwd else None,
+                    env=env,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except Exception as e:
+                self._store.complete(session_id, status="failed", error=f"spawn failed: {e}")
+                raise
+
+            # 5. Send prompt on stdin and close it.
+            try:
+                proc.stdin.write(spec.prompt.encode())
+                await proc.stdin.drain()
+                proc.stdin.close()
+            except Exception:
+                pass  # claude may have exited already; let stream consumption decide.
+
+            # 6. Stream + persist final outcome.
+            try:
+                transcript = self._store.transcript_path(session_id)
+                final_text, usage = await _consume_stream(proc.stdout, transcript)
+                rc = await proc.wait()
+                if rc != 0:
+                    msg = f"claude exited with code {rc}"
+                    self._store.complete(session_id, status="failed", error=msg)
+                    raise RuntimeError(msg)
+                return self._store.complete(
+                    session_id, status="done",
+                    spoken_summary=final_text, usage=usage,
+                )
+            except RuntimeError:
+                raise
+            except Exception as e:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass  # already-dead / permission / etc — don't mask the real error.
+                self._store.complete(session_id, status="failed", error=str(e))
+                raise
+        finally:
+            # CancelledError (BaseException, not Exception) bypasses the
+            # except blocks above. Make sure we never leave a session
+            # "running" or a subprocess orphaned on shutdown.
+            if proc is not None and proc.returncode is None:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                current = self._store.get(session_id)
+                if current and current.status == "running":
+                    self._store.complete(
+                        session_id, status="killed", error="task cancelled",
+                    )

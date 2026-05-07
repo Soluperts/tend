@@ -259,8 +259,8 @@ async def test_run_claude_failure_marks_failed(store, mock_bus):
     assert len(rows) == 1 and rows[0].status == "failed"
 
 
-async def test_run_claude_writes_running_record_before_spawn(store, mock_bus):
-    """If we crash mid-spawn, sessions.json must still show the running entry."""
+async def test_run_claude_creates_session_row(store, mock_bus):
+    """Successful run leaves exactly one row in the store with a session_id."""
     from tend.workers.claude_cli import ClaudeCliWorker, ClaudeRunSpec
 
     proc = _FakeProc([_make_event("ok"), _result_event()], returncode=0)
@@ -271,6 +271,64 @@ async def test_run_claude_writes_running_record_before_spawn(store, mock_bus):
     rows = store.list_recent(limit=10)
     assert len(rows) == 1
     assert rows[0].session_id
+
+
+async def test_run_claude_spawn_failure_marks_failed(store, mock_bus):
+    """If subprocess spawn raises, the store row goes from running → failed
+    and the original exception propagates."""
+    from tend.workers.claude_cli import ClaudeCliWorker, ClaudeRunSpec
+
+    async def bad_factory(*args, **kwargs):
+        raise OSError("claude not found")
+
+    worker = ClaudeCliWorker(
+        "w", bus=mock_bus, store=store, subprocess_factory=bad_factory,
+    )
+    with pytest.raises(OSError, match="claude not found"):
+        await worker.run_claude(ClaudeRunSpec(prompt="hi"))
+
+    rows = store.list_recent(limit=10)
+    assert len(rows) == 1
+    assert rows[0].status == "failed"
+    assert "spawn failed" in (rows[0].error or "")
+
+
+async def test_run_claude_cancelled_marks_killed_and_kills_proc(store, mock_bus):
+    """asyncio.CancelledError must not leave a session 'running' or orphan
+    the subprocess. The finally block converts the row to 'killed'."""
+    import asyncio as aio
+    from tend.workers.claude_cli import ClaudeCliWorker, ClaudeRunSpec
+
+    class _SlowProc(_FakeProc):
+        def __init__(self):
+            super().__init__([], returncode=None)
+
+            async def slow_iter():
+                await aio.sleep(60)
+                if False:
+                    yield b""
+
+            async def slow_wait():
+                await aio.sleep(60)
+
+            self.stdout = slow_iter()
+            self.wait = slow_wait
+            self.returncode = None
+
+    proc = _SlowProc()
+    factory = _make_factory(proc)
+    worker = ClaudeCliWorker("w", bus=mock_bus, store=store, subprocess_factory=factory)
+
+    task = aio.create_task(worker.run_claude(ClaudeRunSpec(prompt="hi")))
+    await aio.sleep(0.05)  # let it spawn + start consuming
+    task.cancel()
+    with pytest.raises(aio.CancelledError):
+        await task
+
+    rows = store.list_recent(limit=10)
+    assert len(rows) == 1
+    assert rows[0].status == "killed"
+    proc.kill.assert_called()
 
 
 async def test_run_claude_resume_uses_resume_arg(store, mock_bus):
