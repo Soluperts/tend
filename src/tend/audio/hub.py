@@ -1,7 +1,16 @@
 """Hub — the always-running audio agent.
 
-Owns the local audio transport, gates, STT/TTS services, and the BusBridge that
-routes voice frames to/from Brain. Brain is added as a child of Hub at runtime.
+Owns the local audio transport, gates, STT/TTS, the LLMContext, and the
+LLMContextAggregatorPair that wraps Brain via the bus. Pipeline order matches
+the canonical pipecat-subagents pattern: user aggregator BEFORE the bridge,
+assistant aggregator AFTER transport.output. That way:
+
+  STT → user_agg (consumes TranscriptionFrame, emits LLMContextFrame)
+       → bridge → bus → Brain.LLM → bus → bridge → TTS → output
+       → assistant_agg (captures the LLM's TextFrames into context)
+
+Brain itself is a thin LLMAgent — it doesn't own the context, it just runs
+the LLM on whatever LLMContextFrame the bridge delivers.
 """
 
 from __future__ import annotations
@@ -9,6 +18,10 @@ from __future__ import annotations
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import (
+    LLMContextAggregatorPair,
+)
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.services.stt_service import STTService
 from pipecat.services.tts_service import TTSService
@@ -20,9 +33,20 @@ from tend.audio.gates import OpenWakeWordGate, SleepPhraseGate
 from tend.audio.logging import InputLatencyLogger, OutputLatencyLogger
 from tend.config import Settings
 
+VOICE_RULES = (
+    "Replies are spoken aloud. Keep them brief — usually one short sentence. "
+    "No markdown, no lists, no code blocks. Plain conversational prose only. "
+    "If the user does not appear to be addressing you, stay silent."
+)
+
+
+def _build_system_prompt(soul_text: str) -> dict:
+    content = soul_text.strip() + "\n\n" + VOICE_RULES
+    return {"role": "system", "content": content}
+
 
 class Hub(BaseAgent):
-    """The audio hub. Owns mic+speakers, gates, STT, TTS, and the voice bridge."""
+    """Audio + context owner. Wraps Brain (the LLM child) via the bus bridge."""
 
     def __init__(
         self,
@@ -41,6 +65,15 @@ class Hub(BaseAgent):
         self._tts = tts
         self._tts_sample_rate = tts_sample_rate
         self._brain = brain
+        self._context = LLMContext()
+
+    @property
+    def context(self) -> LLMContext:
+        return self._context
+
+    async def reset_session(self, soul_text: str) -> None:
+        """Replace the LLMContext's messages with a fresh system prompt only."""
+        self._context.set_messages([_build_system_prompt(soul_text)])
 
     async def build_pipeline(self) -> Pipeline:
         transport = LocalAudioTransport(
@@ -52,11 +85,11 @@ class Hub(BaseAgent):
             )
         )
 
-        # No bridge= name: the framework's _BusEdgeProcessor doesn't tag
-        # outgoing frames with a bridge, so a named filter would drop Brain's
-        # responses. exclude_frames keeps Hub-originated TTSSpeakFrames (e.g.
-        # the wake-word ack "Yes?") in Hub's pipeline so they reach TTS instead
-        # of being broadcast to Brain.
+        aggregators = LLMContextAggregatorPair(self._context)
+
+        # exclude_frames keeps Hub-originated TTSSpeakFrames (e.g. the wake-word
+        # ack "Yes?") in Hub's pipeline so they reach TTS instead of being
+        # broadcast to Brain.
         bridge = BusBridgeProcessor(
             bus=self.bus,
             agent_name=self.name,
@@ -82,13 +115,14 @@ class Hub(BaseAgent):
                 hub=self,
                 brain=self._brain,
             ),
+            aggregators.user(),
             bridge,
             self._tts,
             OutputLatencyLogger(),
             transport.output(),
+            aggregators.assistant(),
         ])
 
     async def on_ready(self) -> None:
-        """Add Brain as a child once Hub's pipeline is up."""
         await super().on_ready()
         await self.add_agent(self._brain)

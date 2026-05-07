@@ -1,12 +1,14 @@
 """Brain — the conversational LLM agent.
 
-Wraps an Anthropic LLMService (or a fallback when Anthropic is unavailable)
-inside an LLMAgent. Persists LLMContext across wake/sleep within a
-day-session; `reset_session` swaps the context for a fresh one.
+Thin LLMAgent: owns the LLM service and its tools, but not the conversation
+context. The context lives in Hub (the transport-owning parent), so frames
+flow through Hub's user aggregator → bridge → Brain's LLM → bridge → Hub's
+TTS → assistant aggregator. This is the canonical pipecat-subagents pattern.
 
 Workers report autonomous announcements via `on_task_update` (a bus-message
-hook that fires regardless of `Brain.active`), keeping the brain aware of
-what was said while it was deactivated.
+hook that fires regardless of `Brain.active`); Brain forwards the announcement
+to Hub's context as an `LLMMessagesAppendFrame` so the next conversation turn
+includes it.
 """
 
 from __future__ import annotations
@@ -14,29 +16,16 @@ from __future__ import annotations
 import asyncio
 
 from loguru import logger
-from pipecat.pipeline.pipeline import Pipeline
-from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response_universal import (
-    LLMContextAggregatorPair,
-)
+from pipecat.frames.frames import LLMMessagesAppendFrame
+from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.llm_service import FunctionCallParams, LLMService
 from pipecat_subagents.agents import LLMAgent, tool
 from pipecat_subagents.bus import AgentBus
-
-VOICE_RULES = (
-    "Replies are spoken aloud. Keep them brief — usually one short sentence. "
-    "No markdown, no lists, no code blocks. Plain conversational prose only. "
-    "If the user does not appear to be addressing you, stay silent."
-)
-
-
-def _build_system_prompt(soul_text: str) -> dict:
-    content = soul_text.strip() + "\n\n" + VOICE_RULES
-    return {"role": "system", "content": content}
+from pipecat_subagents.bus.messages import BusFrameMessage
 
 
 class Brain(LLMAgent):
-    """Conversational brain. LLMAgent with day-session reset and worker awareness."""
+    """Conversational brain. LLM + tools + worker awareness."""
 
     def __init__(
         self,
@@ -46,19 +35,9 @@ class Brain(LLMAgent):
         llm_service: LLMService | None,
         session_manager=None,
     ):
-        # bridged=() — accept frames from any bridge. The framework's
-        # _BusEdgeProcessor doesn't tag outgoing frames with a bridge name,
-        # so a named filter on either side would orphan our responses.
         super().__init__(name, bus=bus, bridged=())
         self._llm_service = llm_service
-        self._session_manager = session_manager  # set later via attach_session_manager
-        self._context = LLMContext()
-        self._aggregators: LLMContextAggregatorPair | None = None
-
-    @property
-    def context(self) -> LLMContext:
-        """The LLMContext for this brain's conversation."""
-        return self._context
+        self._session_manager = session_manager
 
     def attach_session_manager(self, session_manager) -> None:
         self._session_manager = session_manager
@@ -70,24 +49,6 @@ class Brain(LLMAgent):
                 "(or the brain should not be added to the runner if Anthropic preflight failed)."
             )
         return self._llm_service
-
-    async def build_pipeline(self) -> Pipeline:
-        """Build the brain's pipeline: user aggregator → LLM → assistant aggregator.
-
-        Replicates what LLMContextAgent does in pipecat-ai-subagents > 0.4.0.
-        """
-        self._llm = self.create_llm()
-        self._aggregators = LLMContextAggregatorPair(self._context)
-        return Pipeline([
-            self._aggregators.user(),
-            self._llm,
-            self._aggregators.assistant(),
-        ])
-
-    async def reset_session(self, soul_text: str) -> None:
-        """Replace the LLMContext's messages with a fresh system prompt only."""
-        self._context.set_messages([_build_system_prompt(soul_text)])
-        logger.info("brain: session reset (LLMContext flushed, soul reloaded)")
 
     async def on_deactivated(self) -> None:
         await super().on_deactivated()
@@ -102,29 +63,36 @@ class Brain(LLMAgent):
             spoken = update.get("spoken", "")
             ctx = update.get("context", {}) or {}
             ctx_block = "\n".join(f"  {k}: {v}" for k, v in ctx.items())
-            self._context.add_message({
-                "role": "system",
-                "content": (
-                    f"You announced to the user while you were deactivated: {spoken!r}\n"
-                    f"Full task details (for follow-up questions):\n{ctx_block}"
-                ),
-            })
+            await self._append_to_context(
+                f"You announced to the user while you were deactivated: {spoken!r}\n"
+                f"Full task details (for follow-up questions):\n{ctx_block}"
+            )
         elif kind == "error":
             spoken = update.get("spoken", "")
             ctx = update.get("context", {}) or {}
             ctx_block = "\n".join(f"  {k}: {v}" for k, v in ctx.items())
-            self._context.add_message({
-                "role": "system",
-                "content": (
-                    f"A worker failed; you announced to the user: {spoken!r}\n"
-                    f"You could not complete the task. Failure details:\n{ctx_block}"
-                ),
-            })
-        # other kinds: ignored
+            await self._append_to_context(
+                f"A worker failed; you announced to the user: {spoken!r}\n"
+                f"You could not complete the task. Failure details:\n{ctx_block}"
+            )
+
+    async def _append_to_context(self, content: str) -> None:
+        """Add a system message to Hub's context via the bus.
+
+        We publish an LLMMessagesAppendFrame to the bus; Hub's bridge forwards
+        it past the LLM, and Hub's assistant aggregator captures it into the
+        shared LLMContext. Works whether Brain is active or not.
+        """
+        await self.bus.publish(BusFrameMessage(
+            source=self.name,
+            frame=LLMMessagesAppendFrame(
+                messages=[{"role": "system", "content": content}],
+            ),
+            direction=FrameDirection.DOWNSTREAM,
+        ))
 
     async def _ensure_reminder_worker(self) -> None:
         from tend.workers.reminder import ReminderWorker
-        # Idempotent — guard against double-add.
         for child in getattr(self, "_children", []) or []:
             if getattr(child, "name", None) == "reminder":
                 return

@@ -8,7 +8,7 @@ deepgram_model = "nova-3-general"
 whisper_model = "tiny.en"
 
 # TTS
-elevenlabs_voice_id = "EXAVITQu4vr4xnSDxMaL"
+elevenlabs_voice_id = "4cYYCJZtDFOV61Rs1Eoa"
 elevenlabs_model = "eleven_turbo_v2_5"
 piper_voice = "en_US-ryan-high"
 
@@ -27,4 +27,4 @@ daily_reset_time = "04:00"
 soul_path = "soul.md"
 
 # Logging
-log_path = "/tmp/tend.log"
+log_path = "tend.log"

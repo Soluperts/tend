@@ -1,39 +1,35 @@
-"""Tests for Brain — reset_session, on_task_update context update, @tool dispatch."""
+"""Tests for Brain — on_task_update publishes context updates to the bus."""
 
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat_subagents.bus.messages import BusTaskUpdateMessage
+from pipecat.frames.frames import LLMMessagesAppendFrame
+from pipecat_subagents.bus.messages import BusFrameMessage, BusTaskUpdateMessage
 
 
 @pytest.fixture
 def mock_bus():
-    return MagicMock()
+    bus = MagicMock()
+    bus.publish = AsyncMock()
+    return bus
 
 
 @pytest.fixture
 def brain(mock_bus):
     from tend.brain import Brain
-
-    # Build with no LLMService — we test the agent's own logic.
-    b = Brain("brain", bus=mock_bus, llm_service=None)
-    return b
+    return Brain("brain", bus=mock_bus, llm_service=None)
 
 
-async def test_reset_session_clears_messages_and_sets_system_prompt(brain):
-    brain.context.add_message({"role": "user", "content": "hello"})
-    brain.context.add_message({"role": "assistant", "content": "hi"})
-
-    await brain.reset_session("You are Tend, a helpful assistant.")
-
-    msgs = brain.context.get_messages()
-    assert len(msgs) == 1
-    assert msgs[0]["role"] == "system"
-    assert "Tend" in msgs[0]["content"]
+def _published_messages(mock_bus) -> list[dict]:
+    out = []
+    for call in mock_bus.publish.await_args_list:
+        msg = call.args[0]
+        if isinstance(msg, BusFrameMessage) and isinstance(msg.frame, LLMMessagesAppendFrame):
+            out.extend(msg.frame.messages)
+    return out
 
 
-async def test_on_task_update_announcement_appends_system_message(brain):
+async def test_on_task_update_announcement_publishes_context_append(brain, mock_bus):
     msg = MagicMock(spec=BusTaskUpdateMessage)
     msg.update = {
         "kind": "announcement",
@@ -42,14 +38,16 @@ async def test_on_task_update_announcement_appends_system_message(brain):
     }
     await brain.on_task_update(msg)
 
-    msgs = brain.context.get_messages()
-    last = msgs[-1]
-    assert last["role"] == "system"
-    assert "drink water" in last["content"]
-    assert "announced to the user" in last["content"].lower()
+    msgs = _published_messages(mock_bus)
+    assert any(
+        m["role"] == "system"
+        and "drink water" in m["content"]
+        and "announced to the user" in m["content"].lower()
+        for m in msgs
+    )
 
 
-async def test_on_task_update_error_appends_system_message(brain):
+async def test_on_task_update_error_publishes_context_append(brain, mock_bus):
     msg = MagicMock(spec=BusTaskUpdateMessage)
     msg.update = {
         "kind": "error",
@@ -58,16 +56,16 @@ async def test_on_task_update_error_appends_system_message(brain):
     }
     await brain.on_task_update(msg)
 
-    msgs = brain.context.get_messages()
-    last = msgs[-1]
-    assert last["role"] == "system"
-    assert "could not complete" in last["content"].lower() or "failed" in last["content"].lower()
+    msgs = _published_messages(mock_bus)
+    assert any(
+        m["role"] == "system"
+        and ("could not complete" in m["content"].lower() or "failed" in m["content"].lower())
+        for m in msgs
+    )
 
 
-async def test_on_task_update_unknown_kind_is_ignored(brain):
-    """Unknown kinds shouldn't pollute the context."""
-    initial_len = len(brain.context.get_messages())
+async def test_on_task_update_unknown_kind_publishes_nothing(brain, mock_bus):
     msg = MagicMock(spec=BusTaskUpdateMessage)
     msg.update = {"kind": "unknown", "data": "noise"}
     await brain.on_task_update(msg)
-    assert len(brain.context.get_messages()) == initial_len
+    assert _published_messages(mock_bus) == []

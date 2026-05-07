@@ -26,11 +26,16 @@ class SessionManager:
         self,
         *,
         brain,
+        hub,
         soul_path: Path | str,
         reset_time: str = "04:00",
         timezone: str | None = None,
     ):
+        # Brain owns the active flag and emits on_brain_deactivated; Hub owns
+        # the LLMContext and the reset_session method. They're separate
+        # concerns — keep both references explicit.
         self._brain = brain
+        self._hub = hub
         self._soul_path = Path(soul_path)
         self._reset_time = reset_time
         self._tz = ZoneInfo(timezone) if timezone else None
@@ -47,7 +52,7 @@ class SessionManager:
     async def start(self) -> None:
         """Load soul.md and trigger an initial reset_session, then schedule the daily reset."""
         soul = self._read_soul()
-        await self._brain.reset_session(soul)
+        await self._hub.reset_session(soul)
         self._scheduled_task = asyncio.create_task(self._schedule_daily_reset())
 
     async def reset_now(self) -> None:
@@ -57,7 +62,7 @@ class SessionManager:
             logger.info("reset_now: Brain is active, deferring reset until next deactivation")
             return
         soul = self._read_soul()
-        await self._brain.reset_session(soul)
+        await self._hub.reset_session(soul)
 
     async def on_brain_deactivated(self) -> None:
         """Called by Hub when Brain transitions to inactive. Drains a pending reset, if any."""
@@ -65,7 +70,7 @@ class SessionManager:
             return
         self._pending_reset = False
         soul = self._read_soul()
-        await self._brain.reset_session(soul)
+        await self._hub.reset_session(soul)
         logger.info("deferred reset applied after brain deactivation")
 
     async def _schedule_daily_reset(self) -> None:

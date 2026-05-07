@@ -50,15 +50,6 @@ async def _run() -> None:
 
     brain = Brain("brain", bus=runner.bus, llm_service=llm_service)
 
-    session_manager = SessionManager(
-        brain=brain,
-        soul_path=settings.soul_path,
-        reset_time=settings.daily_reset_time,
-        timezone=settings.timezone,
-    )
-    brain.attach_session_manager(session_manager)
-    await session_manager.start()
-
     stt = _make_stt(settings)
     tts, tts_rate = _make_tts(settings)
 
@@ -67,6 +58,17 @@ async def _run() -> None:
         stt=stt, tts=tts, tts_sample_rate=tts_rate,
         brain=brain,
     )
+
+    session_manager = SessionManager(
+        brain=brain,
+        hub=hub,
+        soul_path=settings.soul_path,
+        reset_time=settings.daily_reset_time,
+        timezone=settings.timezone,
+    )
+    brain.attach_session_manager(session_manager)
+    await session_manager.start()
+
     await runner.add_agent(hub)
     await runner.run()
 
