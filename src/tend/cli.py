@@ -87,7 +87,7 @@ def cmd_sessions_tail(args) -> None:
     with open(path, "r") as f:
         for line in f:
             _print_event(line, args.raw)
-        if not getattr(args, "follow", False):
+        if not args.follow:
             return
         while True:
             line = f.readline()
@@ -103,7 +103,11 @@ def cmd_sessions_cat(args) -> None:
     if not match:
         print(f"No session matching '{args.session_id}'", file=sys.stderr)
         sys.exit(1)
-    sys.stdout.write(Path(match.transcript_path).read_text())
+    path = Path(match.transcript_path)
+    if not path.exists():
+        print(f"Transcript not found: {path}", file=sys.stderr)
+        sys.exit(1)
+    sys.stdout.write(path.read_text())
 
 
 def _print_event(line: str, raw: bool) -> None:
