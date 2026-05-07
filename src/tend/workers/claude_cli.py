@@ -110,6 +110,6 @@ def _build_args(
     return args
 
 
-def _scrubbed_env(env_in: dict) -> dict:
+def _scrubbed_env(env_in: dict[str, str]) -> dict[str, str]:
     """Return a copy of env_in with the dangerous keys removed."""
     return {k: v for k, v in env_in.items() if k not in CLAUDE_CLI_CLEAR_ENV}

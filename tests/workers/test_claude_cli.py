@@ -3,8 +3,6 @@ no actual `claude` is spawned in unit tests."""
 
 from pathlib import Path
 
-import pytest
-
 from tend.workers.claude_cli import (
     CLAUDE_CLI_CLEAR_ENV,
     ClaudeRunSpec,
@@ -66,6 +64,13 @@ def test_build_args_no_system_prompt_when_resuming():
     spec = ClaudeRunSpec(prompt="next", resume_session_id="sid-1")
     args = _build_args(spec, session_id="sid-1", system_prompt_path=Path("/tmp/sys.txt"))
     assert "--append-system-prompt-file" not in args
+
+
+def test_build_args_empty_allowed_tools_omits_flag():
+    """Empty allowed_tools list must not emit a bare --allowedTools flag."""
+    spec = ClaudeRunSpec(prompt="x", allowed_tools=[])
+    args = _build_args(spec, session_id="s", system_prompt_path=None)
+    assert "--allowedTools" not in args
 
 
 def test_scrubbed_env_removes_dangerous_keys():
