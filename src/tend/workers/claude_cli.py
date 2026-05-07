@@ -11,10 +11,18 @@ See docs/superpowers/specs/2026-05-06-claude-cli-workers-design.md.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import AsyncIterator
+
+from pipecat_subagents.agents import BaseAgent
+from pipecat_subagents.bus import AgentBus
+
+from tend.sessions import SessionEntry, SessionStore
 
 
 # Env vars to scrub before spawning `claude`. If any of these are set in
@@ -144,3 +152,94 @@ async def _consume_stream(
                     **(ev.get("usage") or {}),
                 }
     return ("".join(final_parts).strip(), usage)
+
+
+class ClaudeCliWorker(BaseAgent):
+    """Base for any worker that drives `claude` as a subprocess.
+
+    Subclasses call `run_claude(spec)` from inside an `@task` method. The
+    subprocess factory is injectable so tests can substitute a fake.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        bus: AgentBus,
+        store: SessionStore,
+        subprocess_factory=None,
+    ):
+        super().__init__(name, bus=bus)
+        self._store = store
+        # Default factory is asyncio.create_subprocess_exec — passes args as a
+        # list, no shell, no injection risk.
+        self._subprocess_factory = (
+            subprocess_factory or asyncio.create_subprocess_exec
+        )
+
+    async def run_claude(self, spec: ClaudeRunSpec) -> SessionEntry:
+        session_id = (
+            spec.resume_session_id or spec.session_id or uuid.uuid4().hex
+        )
+
+        # 1. Persist a "running" record before doing anything risky.
+        self._store.start(
+            session_id=session_id,
+            worker=self.name,
+            request=spec.prompt[:200],
+            cwd=str(spec.cwd) if spec.cwd else None,
+        )
+
+        # 2. System prompt → file (only on first run).
+        sys_path = None
+        if spec.system_prompt and not spec.resume_session_id:
+            sys_path = self._store.write_system_prompt(session_id, spec.system_prompt)
+
+        # 3. Build args + scrub env.
+        args = _build_args(spec, session_id=session_id, system_prompt_path=sys_path)
+        env = _scrubbed_env(dict(os.environ))
+
+        # 4. Spawn.
+        try:
+            proc = await self._subprocess_factory(
+                *args,
+                cwd=str(spec.cwd) if spec.cwd else None,
+                env=env,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except Exception as e:
+            self._store.complete(session_id, status="failed", error=f"spawn failed: {e}")
+            raise
+
+        # 5. Send prompt on stdin and close it.
+        try:
+            proc.stdin.write(spec.prompt.encode())
+            await proc.stdin.drain()
+            proc.stdin.close()
+        except Exception:
+            pass  # claude may have exited already; let stream consumption decide.
+
+        # 6. Stream + persist final outcome.
+        try:
+            transcript = self._store.transcript_path(session_id)
+            final_text, usage = await _consume_stream(proc.stdout, transcript)
+            rc = await proc.wait()
+            if rc != 0:
+                msg = f"claude exited with code {rc}"
+                self._store.complete(session_id, status="failed", error=msg)
+                raise RuntimeError(msg)
+            return self._store.complete(
+                session_id, status="done",
+                spoken_summary=final_text, usage=usage,
+            )
+        except RuntimeError:
+            raise
+        except Exception as e:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            self._store.complete(session_id, status="failed", error=str(e))
+            raise
