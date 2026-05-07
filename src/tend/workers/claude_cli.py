@@ -98,6 +98,9 @@ def _build_args(
         args += ["--session-id", session_id]
     if spec.allowed_tools:
         args += ["--allowedTools", ",".join(spec.allowed_tools)]
+    # Caller decides whether to write a system prompt (i.e. whether to pass
+    # `system_prompt_path`). _build_args only honours the path it's given,
+    # gated by the resume rule (resumed sessions already have the prompt).
     if system_prompt_path and not spec.resume_session_id:
         args += ["--append-system-prompt-file", str(system_prompt_path)]
     if spec.mcp_config_path:
