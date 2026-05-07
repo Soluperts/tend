@@ -23,6 +23,8 @@ from pipecat_subagents.agents import LLMAgent, tool
 from pipecat_subagents.bus import AgentBus
 from pipecat_subagents.bus.messages import BusFrameMessage
 
+from tend.sessions import SessionStore
+
 
 class Brain(LLMAgent):
     """Conversational brain. LLM + tools + worker awareness."""
@@ -34,10 +36,12 @@ class Brain(LLMAgent):
         bus: AgentBus,
         llm_service: LLMService | None,
         session_manager=None,
+        store: SessionStore | None = None,
     ):
         super().__init__(name, bus=bus, bridged=())
         self._llm_service = llm_service
         self._session_manager = session_manager
+        self._store = store
 
     def attach_session_manager(self, session_manager) -> None:
         self._session_manager = session_manager
@@ -101,6 +105,24 @@ class Brain(LLMAgent):
         except Exception as e:
             logger.debug(f"reminder worker may already exist: {e!r}")
 
+    async def _ensure_coding_worker(self) -> None:
+        from tend.config import WorkerConfig, settings
+        from tend.workers.coding import CodingWorker
+
+        for child in getattr(self, "_children", []) or []:
+            if getattr(child, "name", None) == "coding":
+                return
+        cfg = settings.workers.get("coding") or WorkerConfig()
+        if self._store is None:
+            logger.warning("Brain has no SessionStore; coding worker cannot be added.")
+            return
+        try:
+            await self.add_agent(
+                CodingWorker("coding", bus=self.bus, store=self._store, config=cfg),
+            )
+        except Exception as e:
+            logger.debug(f"coding worker may already exist: {e!r}")
+
     @tool
     async def remind_in(self, params: FunctionCallParams, seconds: int, what: str):
         """Ask the assistant to remind you about something after a delay.
@@ -122,3 +144,84 @@ class Brain(LLMAgent):
         if self._session_manager:
             asyncio.create_task(self._session_manager.reset_now())
         return "Starting fresh."
+
+    @tool
+    async def code_in(self, params: FunctionCallParams, repo: str, request: str):
+        """Dispatch a coding task to the background coding worker.
+
+        Args:
+            repo (str): Absolute path to the git repository to operate on.
+            request (str): What you want done, in plain English.
+        """
+        await self._ensure_coding_worker()
+        await self.request_task(
+            "coding", payload={"repo": repo, "request": request},
+        )
+        return f"Got it. I'll work on '{request[:80]}' and let you know when it's ready."
+
+    @tool
+    async def list_recent_jobs(self, params: FunctionCallParams, limit: int = 5):
+        """List recent background jobs and their status.
+
+        Args:
+            limit (int): How many recent jobs to return (default 5).
+        """
+        if self._store is None:
+            return "Session store unavailable."
+        rows = self._store.list_recent(limit=limit)
+        if not rows:
+            return "No jobs yet."
+        lines = []
+        for r in rows:
+            lines.append(
+                f"[{r.status}] {r.worker} {r.session_id[:8]}: {r.request[:80]}"
+                + (f" — {r.spoken_summary}" if r.spoken_summary else "")
+            )
+        return "\n".join(lines)
+
+    @tool
+    async def session_status(self, params: FunctionCallParams, session_id: str):
+        """Look up the status of a specific background job by session id.
+
+        Args:
+            session_id (str): The session id (full or unique prefix).
+        """
+        if self._store is None:
+            return "Session store unavailable."
+        rows = self._store.list_recent(limit=1000)
+        match = next((r for r in rows if r.session_id.startswith(session_id)), None)
+        if not match:
+            return f"No session matching '{session_id}'."
+        parts = [f"[{match.status}] {match.worker}: {match.request}"]
+        if match.spoken_summary:
+            parts.append(f"summary: {match.spoken_summary}")
+        if match.error:
+            parts.append(f"error: {match.error}")
+        return " | ".join(parts)
+
+    @tool
+    async def continue_session(
+        self, params: FunctionCallParams, session_id: str, follow_up: str,
+    ):
+        """Resume a previous background job with a follow-up instruction.
+
+        Args:
+            session_id (str): The session id (full or unique prefix) to resume.
+            follow_up (str): What to do next, in plain English.
+        """
+        if self._store is None:
+            return "Session store unavailable."
+        rows = self._store.list_recent(limit=1000)
+        match = next((r for r in rows if r.session_id.startswith(session_id)), None)
+        if not match:
+            return f"Couldn't find session '{session_id}'."
+        await self._ensure_coding_worker()
+        await self.request_task(
+            match.worker,
+            payload={
+                "request": follow_up,
+                "repo": match.cwd or "",
+                "resume_session_id": match.session_id,
+            },
+        )
+        return f"Got it. I'll follow up on session {match.session_id[:8]}."
