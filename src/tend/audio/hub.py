@@ -52,15 +52,14 @@ class Hub(BaseAgent):
             )
         )
 
-        # Hub-originated TTSSpeakFrames (e.g. the wake-word ack "Yes?") need to
-        # reach the local TTS service downstream, not be redirected to the bus.
-        # The bridge would otherwise swallow them — see pipecat_subagents
-        # BusBridgeProcessor.process_frame, which sends every non-lifecycle frame
-        # to the bus instead of forwarding it.
+        # No bridge= name: the framework's _BusEdgeProcessor doesn't tag
+        # outgoing frames with a bridge, so a named filter would drop Brain's
+        # responses. exclude_frames keeps Hub-originated TTSSpeakFrames (e.g.
+        # the wake-word ack "Yes?") in Hub's pipeline so they reach TTS instead
+        # of being broadcast to Brain.
         bridge = BusBridgeProcessor(
             bus=self.bus,
             agent_name=self.name,
-            bridge="voice",
             exclude_frames=(TTSSpeakFrame,),
             name=f"{self.name}::voice-bridge",
         )

@@ -53,7 +53,6 @@ class ReminderWorker(BaseAgent):
             source=self.name,
             frame=TTSSpeakFrame(spoken),
             direction=FrameDirection.DOWNSTREAM,
-            bridge="voice",
         ))
         await self.send_task_update(task_id, {
             "kind": "announcement",
@@ -69,7 +68,6 @@ class ReminderWorker(BaseAgent):
             source=self.name,
             frame=TTSSpeakFrame(spoken),
             direction=FrameDirection.DOWNSTREAM,
-            bridge="voice",
         ))
         await self.send_task_update(task_id, {
             "kind": "error",

@@ -58,10 +58,9 @@ async def test_worker_completes_and_brain_context_updates_while_inactive(mock_bu
     # Simulate the worker firing.
     await worker.handle_reminder(_request(seconds=0.001, what="drink water"))
 
-    # 1. TTSSpeakFrame was published to the voice bridge.
+    # 1. TTSSpeakFrame was published on the bus for Hub's BusBridge.
     assert any(
         isinstance(c.args[0].frame, TTSSpeakFrame)
-        and c.args[0].bridge == "voice"
         for c in mock_bus.publish.await_args_list
     )
 

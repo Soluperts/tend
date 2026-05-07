@@ -31,13 +31,12 @@ async def test_reminder_completes_and_announces(mock_bus):
 
     await worker.handle_reminder(_request(seconds=0.01, what="drink water"))
 
-    # TTSSpeakFrame published to voice bridge
+    # TTSSpeakFrame published on the bus for Hub's BusBridge to forward to TTS.
     publish_calls = mock_bus.publish.await_args_list
     assert any(
         isinstance(c.args[0], BusFrameMessage)
         and isinstance(c.args[0].frame, TTSSpeakFrame)
         and "drink water" in c.args[0].frame.text
-        and c.args[0].bridge == "voice"
         for c in publish_calls
     )
 

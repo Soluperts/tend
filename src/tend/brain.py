@@ -46,7 +46,10 @@ class Brain(LLMAgent):
         llm_service: LLMService | None,
         session_manager=None,
     ):
-        super().__init__(name, bus=bus, bridged=("voice",))
+        # bridged=() — accept frames from any bridge. The framework's
+        # _BusEdgeProcessor doesn't tag outgoing frames with a bridge name,
+        # so a named filter on either side would orphan our responses.
+        super().__init__(name, bus=bus, bridged=())
         self._llm_service = llm_service
         self._session_manager = session_manager  # set later via attach_session_manager
         self._context = LLMContext()
