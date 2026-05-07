@@ -25,6 +25,12 @@ def brain(mock_bus, store):
     return Brain("brain", bus=mock_bus, llm_service=None, store=store)
 
 
+@pytest.fixture
+def brain_no_store(mock_bus):
+    from tend.brain import Brain
+    return Brain("brain", bus=mock_bus, llm_service=None)
+
+
 async def test_list_recent_jobs_empty(brain):
     out = await brain.list_recent_jobs(MagicMock(), limit=5)
     assert "no jobs" in out.lower() or "empty" in out.lower()
@@ -85,3 +91,31 @@ async def test_continue_session_unknown_id(brain):
         MagicMock(), session_id="nope", follow_up="x"
     )
     assert "no session" in out.lower() or "couldn't find" in out.lower()
+
+
+async def test_list_recent_jobs_no_store(brain_no_store):
+    out = await brain_no_store.list_recent_jobs(MagicMock(), limit=5)
+    assert "unavailable" in out.lower()
+
+
+async def test_session_status_no_store(brain_no_store):
+    out = await brain_no_store.session_status(MagicMock(), session_id="x")
+    assert "unavailable" in out.lower()
+
+
+async def test_continue_session_no_store(brain_no_store):
+    out = await brain_no_store.continue_session(
+        MagicMock(), session_id="x", follow_up="y",
+    )
+    assert "unavailable" in out.lower()
+
+
+async def test_code_in_no_store_does_not_dispatch(brain_no_store):
+    """Without a store, code_in must NOT fire request_task at the unregistered
+    coding worker — it should fail loud instead."""
+    brain_no_store.request_task = AsyncMock()
+    out = await brain_no_store.code_in(
+        MagicMock(), repo="/home/pi/hasat", request="anything",
+    )
+    brain_no_store.request_task.assert_not_awaited()
+    assert "unavailable" in out.lower()

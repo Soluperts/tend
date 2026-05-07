@@ -153,6 +153,10 @@ class Brain(LLMAgent):
             repo (str): Absolute path to the git repository to operate on.
             request (str): What you want done, in plain English.
         """
+        if self._store is None:
+            # Without a store, _ensure_coding_worker no-ops and request_task
+            # would fire at a worker that doesn't exist. Fail loud and clear.
+            return "Session store unavailable — cannot dispatch coding tasks."
         await self._ensure_coding_worker()
         await self.request_task(
             "coding", payload={"repo": repo, "request": request},
