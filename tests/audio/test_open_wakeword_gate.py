@@ -95,6 +95,36 @@ async def test_forwards_audio_when_brain_active(mock_oww_model, mock_brain, mock
     mock_hub.activate_agent.assert_not_called()
 
 
+async def test_cooldown_after_deactivation_skips_oww_and_resets_model(mock_oww_model, mock_brain, mock_hub):
+    """After Brain deactivates, gate must drop audio without running OWW for the cooldown window."""
+    from tend.audio.gates import OpenWakeWordGate, _POST_SLEEP_COOLDOWN_S
+    mock_brain.active = True  # start awake
+    gate = OpenWakeWordGate(
+        model_name="hey_jarvis", threshold=0.5, hub=mock_hub, brain=mock_brain
+    )
+    gate._model = mock_oww_model
+
+    captured = []
+
+    # Awake: forwards audio, OWW not called.
+    await _drive(gate, _audio_frame(), captured)
+    assert captured  # frame forwarded
+
+    # User says sleep phrase; SleepPhraseGate flips Brain → inactive.
+    mock_brain.active = False
+
+    # Next audio frame after deactivation: gate notices the transition, resets
+    # the oww model, and drops the frame without calling predict (cooldown).
+    await _drive(gate, _audio_frame(), [])
+    mock_oww_model.reset.assert_called_once()
+    mock_oww_model.predict.assert_not_called()
+
+    # Fast-forward past the cooldown window; predict is now allowed.
+    gate._deactivated_at -= _POST_SLEEP_COOLDOWN_S + 0.1
+    await _drive(gate, _audio_frame(), [])
+    mock_oww_model.predict.assert_called_once()
+
+
 async def test_buffers_subwindow_frames_until_chunk_complete(mock_oww_model, mock_brain, mock_hub):
     """Pipecat transport delivers frames smaller than openWakeWord's window — gate must buffer."""
     from tend.audio.gates import OpenWakeWordGate

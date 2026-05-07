@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 
 import numpy as np
 from loguru import logger
@@ -22,6 +23,13 @@ from rapidfuzz import fuzz
 # openWakeWord's expected window: 80 ms @ 16 kHz. Its hard minimum is 400 samples (25 ms);
 # below that, predict() raises. Pipecat's transport emits much smaller chunks, so we buffer.
 _OWW_CHUNK_SAMPLES = 1280
+
+# After Brain deactivates, ignore audio for this long before resuming wake-word
+# detection. The sleep phrase's trailing audio is still in flight when the
+# deactivation lands (Pipecat ships 20 ms frames; STT + sleep-phrase fuzzy match
+# add latency), and the openWakeWord model averages a rolling window of
+# predictions, so leftover audio can re-fire the wake gate immediately.
+_POST_SLEEP_COOLDOWN_S = 1.5
 
 
 class OpenWakeWordGate(FrameProcessor):
@@ -57,6 +65,8 @@ class OpenWakeWordGate(FrameProcessor):
         self._ack_text = ack_text
         self._model = self._build_model()
         self._buffer = np.empty(0, dtype=np.int16)
+        self._was_active = brain.active
+        self._deactivated_at: float | None = None
 
     def _build_model(self):
         from openwakeword import get_pretrained_model_paths
@@ -103,10 +113,28 @@ class OpenWakeWordGate(FrameProcessor):
             await self.push_frame(frame, direction)
             return
 
+        # Detect active-state transitions. On any flip, drop our sample buffer
+        # so we never feed stale audio across a sleep/wake boundary; on
+        # deactivation, also reset openWakeWord's prediction history and stamp
+        # the cooldown clock so trailing sleep-phrase audio can't re-trigger.
+        if self._brain.active != self._was_active:
+            self._was_active = self._brain.active
+            self._buffer = np.empty(0, dtype=np.int16)
+            if not self._brain.active:
+                self._deactivated_at = time.monotonic()
+                self._model.reset()
+
         if self._brain.active:
             # Brain is active — forward audio to STT downstream; skip OWW (saves CPU).
             await self.push_frame(frame, direction)
             return
+
+        # Cooldown after deactivation: drop frames without running OWW.
+        if (
+            self._deactivated_at is not None
+            and time.monotonic() - self._deactivated_at < _POST_SLEEP_COOLDOWN_S
+        ):
+            return  # frame dropped
 
         # Brain inactive: buffer audio and feed full chunks to OWW. Drop the frame regardless.
         samples = np.frombuffer(frame.audio, dtype=np.int16)
