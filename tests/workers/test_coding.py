@@ -115,3 +115,97 @@ async def test_coding_worker_runs_claude_and_announces(
 
     # 4. task_response delivered
     worker.send_task_response.assert_awaited_once()
+
+
+def _resume_request(request: str, resume_id: str) -> BusTaskRequestMessage:
+    msg = MagicMock(spec=BusTaskRequestMessage)
+    msg.task_id = "t-resume"
+    msg.payload = {"request": request, "resume_session_id": resume_id, "repo": ""}
+    return msg
+
+
+async def test_coding_worker_resume_skips_worktree_creation(
+    store, mock_bus, fake_worktree
+):
+    """The resume branch must not call the worktree_factory and must pass
+    --resume to claude."""
+    from tend.workers.coding import CodingWorker
+
+    # Seed a prior session so resume has something to refer to.
+    store.start(
+        session_id="prev123", worker="coding", request="initial", cwd="/tmp/wt",
+    )
+    store.complete("prev123", status="done", spoken_summary="initial done")
+
+    proc = _FakeProc(_result("Follow-up applied."))
+    async def factory(*args, **kwargs):
+        factory.args = args
+        factory.kwargs = kwargs
+        return proc
+
+    factory_calls = {"count": 0}
+    def tracking_factory(repo, session_id):
+        factory_calls["count"] += 1
+        return fake_worktree(repo, session_id)
+
+    cfg = WorkerConfig(allowed_tools=["Read", "Edit"])
+    worker = CodingWorker(
+        "coding", bus=mock_bus, store=store, config=cfg,
+        subprocess_factory=factory, worktree_factory=tracking_factory,
+    )
+    worker.send_task_update = AsyncMock()
+    worker.send_task_response = AsyncMock()
+
+    await worker.code_in(_resume_request("follow up", "prev123"))
+
+    # 1. worktree_factory was NOT called
+    assert factory_calls["count"] == 0
+
+    # 2. --resume was passed to claude
+    args = factory.args
+    assert "--resume" in args
+    assert args[args.index("--resume") + 1] == "prev123"
+    # And --session-id is mutually excluded
+    assert "--session-id" not in args
+
+
+async def test_coding_worker_announces_error_when_run_claude_fails(
+    store, mock_bus, fake_worktree
+):
+    """run_claude failure must trigger _announce_error, not _announce."""
+    from tend.workers.coding import CodingWorker
+
+    # Subprocess exits with non-zero → run_claude raises RuntimeError.
+    proc = _FakeProc([], returncode=1)
+    async def factory(*args, **kwargs):
+        return proc
+
+    cfg = WorkerConfig(allowed_tools=["Read"])
+    worker = CodingWorker(
+        "coding", bus=mock_bus, store=store, config=cfg,
+        subprocess_factory=factory, worktree_factory=fake_worktree,
+    )
+    worker.send_task_update = AsyncMock()
+    worker.send_task_response = AsyncMock()
+
+    await worker.code_in(_request("break things"))
+
+    # Error TTS announced
+    speaks = [
+        c.args[0].frame.text for c in mock_bus.publish.await_args_list
+        if isinstance(c.args[0], BusFrameMessage)
+        and isinstance(c.args[0].frame, TTSSpeakFrame)
+    ]
+    assert any("didn't complete" in s.lower() for s in speaks)
+
+    # task_update kind=error
+    update = worker.send_task_update.await_args.args[1]
+    assert update["kind"] == "error"
+    assert "error" in update["context"]
+
+    # task_response with error status
+    worker.send_task_response.assert_awaited_once()
+    response_kwargs = worker.send_task_response.await_args.kwargs
+    response_args = worker.send_task_response.await_args.args
+    # status is passed as a kwarg per ReminderWorker pattern
+    assert "status" in response_kwargs or len(response_args) >= 3

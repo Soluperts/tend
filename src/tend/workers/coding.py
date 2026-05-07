@@ -7,6 +7,7 @@ the worker resumes the existing claude session and reuses its worktree.
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import uuid
 from pathlib import Path
@@ -58,6 +59,12 @@ class CodingWorker(ClaudeCliWorker):
         request = str(message.payload["request"])
         resume_id = message.payload.get("resume_session_id")
 
+        # Note: `except Exception` deliberately does NOT catch
+        # `asyncio.CancelledError` (a BaseException). Cancellation should
+        # propagate up through `run_claude`'s finally block so the session
+        # is marked "killed" and the subprocess is reaped.
+
+        # Phase 1: do the work. Failures here trigger _announce_error.
         try:
             if resume_id:
                 # Resuming: claude already knows the worktree from the prior turn.
@@ -71,7 +78,12 @@ class CodingWorker(ClaudeCliWorker):
             else:
                 repo = Path(message.payload["repo"]).expanduser()
                 session_id = uuid.uuid4().hex
-                worktree = self._worktree_factory(repo, session_id)
+                # Worktree creation can take 50–200 ms on a Pi 5 (longer on
+                # cold cache). Hand it to the executor so the asyncio loop
+                # keeps running for audio / VAD / STT.
+                worktree = await asyncio.to_thread(
+                    self._worktree_factory, repo, session_id,
+                )
                 spec = ClaudeRunSpec(
                     prompt=request,
                     session_id=session_id,
@@ -80,11 +92,19 @@ class CodingWorker(ClaudeCliWorker):
                     model=self._config.model,
                     cwd=worktree,
                 )
-
             entry = await self.run_claude(spec)
-            await self._announce(message.task_id, entry)
         except Exception as e:
             logger.exception("CodingWorker failed")
+            await self._announce_error(message.task_id, request, e)
+            return
+
+        # Phase 2: announce. A failure here must not also call _announce_error
+        # with the original exception — the work succeeded, the announce just
+        # didn't land. Fall through to a separate error-announce attempt.
+        try:
+            await self._announce(message.task_id, entry)
+        except Exception as e:
+            logger.exception("CodingWorker _announce failed after successful run")
             await self._announce_error(message.task_id, request, e)
 
     async def _announce(self, task_id, entry):
