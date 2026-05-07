@@ -98,3 +98,62 @@ def test_clear_env_includes_critical_keys():
         "CLAUDE_CODE_OAUTH_TOKEN",
     }
     assert must_clear.issubset(set(CLAUDE_CLI_CLEAR_ENV))
+
+
+import asyncio
+import json
+
+
+def _async_iter(lines: list[bytes]):
+    async def gen():
+        for line in lines:
+            yield line
+    return gen()
+
+
+async def test_consume_stream_extracts_final_text(tmp_path):
+    from tend.workers.claude_cli import _consume_stream
+
+    transcript = tmp_path / "t.jsonl"
+    events = [
+        json.dumps({"type": "system", "subtype": "init"}).encode() + b"\n",
+        json.dumps({
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "Hello "}]},
+        }).encode() + b"\n",
+        json.dumps({
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "world."}]},
+        }).encode() + b"\n",
+        json.dumps({
+            "type": "result", "subtype": "success",
+            "total_cost_usd": 0.05, "usage": {"input_tokens": 10},
+        }).encode() + b"\n",
+    ]
+    final, usage = await _consume_stream(_async_iter(events), transcript)
+    assert final == "Hello world."
+    assert usage.get("total_cost_usd") == 0.05
+    # Transcript is on disk
+    assert transcript.read_bytes().count(b"\n") == 4
+
+
+async def test_consume_stream_skips_unparseable_lines(tmp_path):
+    from tend.workers.claude_cli import _consume_stream
+
+    events = [
+        b"not-json\n",
+        json.dumps({
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "ok"}]},
+        }).encode() + b"\n",
+    ]
+    final, _ = await _consume_stream(_async_iter(events), tmp_path / "t.jsonl")
+    assert final == "ok"
+
+
+async def test_consume_stream_handles_no_assistant_text(tmp_path):
+    from tend.workers.claude_cli import _consume_stream
+
+    events = [json.dumps({"type": "result", "subtype": "success"}).encode() + b"\n"]
+    final, _ = await _consume_stream(_async_iter(events), tmp_path / "t.jsonl")
+    assert final == ""

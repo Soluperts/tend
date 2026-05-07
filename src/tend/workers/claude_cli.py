@@ -11,8 +11,10 @@ See docs/superpowers/specs/2026-05-06-claude-cli-workers-design.md.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import AsyncIterator
 
 
 # Env vars to scrub before spawning `claude`. If any of these are set in
@@ -113,3 +115,32 @@ def _build_args(
 def _scrubbed_env(env_in: dict[str, str]) -> dict[str, str]:
     """Return a copy of env_in with the dangerous keys removed."""
     return {k: v for k, v in env_in.items() if k not in CLAUDE_CLI_CLEAR_ENV}
+
+
+async def _consume_stream(
+    stdout: AsyncIterator[bytes],
+    transcript_path: Path,
+) -> tuple[str, dict]:
+    """Read claude's JSONL event stream. Tee to disk, extract final assistant
+    text and the trailing `result` event's usage dict."""
+    final_parts: list[str] = []
+    usage: dict = {}
+    transcript_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(transcript_path, "ab") as f:
+        async for raw_line in stdout:
+            f.write(raw_line)
+            try:
+                ev = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+            t = ev.get("type")
+            if t == "assistant":
+                for block in ev.get("message", {}).get("content", []):
+                    if block.get("type") == "text":
+                        final_parts.append(block.get("text", ""))
+            elif t == "result":
+                usage = {
+                    "total_cost_usd": ev.get("total_cost_usd"),
+                    **(ev.get("usage") or {}),
+                }
+    return ("".join(final_parts).strip(), usage)
