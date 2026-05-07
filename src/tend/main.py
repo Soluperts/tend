@@ -14,7 +14,14 @@ from __future__ import annotations
 
 import asyncio
 import faulthandler
+import os
 import sys
+
+# Pipecat eagerly imports transformers via its turn-detection module. Tend
+# doesn't use any transformers-backed service, so silence the "PyTorch was
+# not found" advisory before any pipecat import triggers it.
+os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 
 from loguru import logger
 from pipecat_subagents.runner import AgentRunner
