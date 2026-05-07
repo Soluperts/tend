@@ -1,9 +1,5 @@
 """WorkerConfig is loaded per-worker from tend.toml."""
 
-from pathlib import Path
-
-import pytest
-
 from tend.config import Settings, WorkerConfig
 
 
@@ -39,6 +35,9 @@ allowed_tools = ["mcp__google_calendar__*"]
     assert s.workers["meal_plan"].allowed_tools == ["mcp__google_calendar__*"]
 
 
-def test_settings_workers_default_empty():
+def test_settings_workers_default_empty(tmp_path, monkeypatch):
+    # Pin to a directory with no tend.toml so this test can't be silently
+    # broken when Task 10 adds [workers.coding] to the project root tend.toml.
+    monkeypatch.chdir(tmp_path)
     s = Settings()
-    assert isinstance(s.workers, dict)
+    assert s.workers == {}
