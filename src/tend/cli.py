@@ -177,8 +177,17 @@ def _mcp_list_markdown() -> str:
     if j.returncode == 0:
         try:
             data = json.loads(j.stdout)
-            servers = data.get("servers") if isinstance(data, dict) else data
-            return _mcp_table(servers)
+            if isinstance(data, dict):
+                servers = data.get("servers")
+            elif isinstance(data, list):
+                servers = data
+            else:
+                servers = None
+            if servers is not None:
+                try:
+                    return _mcp_table(servers)
+                except (TypeError, AttributeError):
+                    pass  # malformed shape — fall through to plain-text
         except json.JSONDecodeError:
             pass
     t = subprocess.run(
