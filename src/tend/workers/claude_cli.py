@@ -164,6 +164,26 @@ async def _consume_stream(
     return ("".join(final_parts).strip(), usage)
 
 
+async def _drain_stderr(stderr: AsyncIterator[bytes] | None) -> str:
+    """Read claude's stderr to a string. Bounded so a runaway process can't
+    blow up memory. Returning '' on cancellation/None is fine — stderr is
+    only used to enrich error messages, never as primary signal."""
+    if stderr is None:
+        return ""
+    chunks: list[bytes] = []
+    total = 0
+    LIMIT = 64 * 1024  # 64 KiB is plenty for an error message.
+    try:
+        async for line in stderr:
+            chunks.append(line)
+            total += len(line)
+            if total >= LIMIT:
+                break
+    except asyncio.CancelledError:
+        return b"".join(chunks).decode("utf-8", errors="replace")
+    return b"".join(chunks).decode("utf-8", errors="replace")
+
+
 class ClaudeCliWorker(BaseAgent):
     """Base for any worker that drives `claude` as a subprocess.
 
@@ -188,8 +208,10 @@ class ClaudeCliWorker(BaseAgent):
         )
 
     async def run_claude(self, spec: ClaudeRunSpec) -> SessionEntry:
+        # claude --session-id requires a canonical UUID (8-4-4-4-12 with
+        # dashes); the hex-only form is rejected. Use str(), not .hex.
         session_id = (
-            spec.resume_session_id or spec.session_id or uuid.uuid4().hex
+            spec.resume_session_id or spec.session_id or str(uuid.uuid4())
         )
 
         # 1. Persist a "running" record before doing anything risky.
@@ -257,13 +279,23 @@ class ClaudeCliWorker(BaseAgent):
             except Exception:
                 pass  # claude may have exited already; let stream consumption decide.
 
-            # 6. Stream + persist final outcome.
+            # 6. Stream + persist final outcome. We read stderr concurrently
+            # so claude's actual error message (e.g. "Invalid session ID")
+            # surfaces in the failure record — and so the pipe buffer can't
+            # fill and deadlock claude on a verbose stderr.
+            stderr_task = asyncio.create_task(_drain_stderr(proc.stderr))
             try:
                 transcript = self._store.transcript_path(session_id)
                 final_text, usage = await _consume_stream(proc.stdout, transcript)
                 rc = await proc.wait()
+                stderr_text = await stderr_task
                 if rc != 0:
-                    msg = f"claude exited with code {rc}"
+                    detail = stderr_text.strip().splitlines()[-3:]  # last few lines
+                    detail_str = " | ".join(detail) if detail else ""
+                    msg = (
+                        f"claude exited with code {rc}"
+                        + (f": {detail_str}" if detail_str else "")
+                    )
                     self._store.complete(session_id, status="failed", error=msg)
                     raise RuntimeError(msg)
                 return self._store.complete(
@@ -277,6 +309,8 @@ class ClaudeCliWorker(BaseAgent):
                     proc.kill()
                 except OSError:
                     pass  # already-dead / permission / etc — don't mask the real error.
+                if not stderr_task.done():
+                    stderr_task.cancel()
                 self._store.complete(session_id, status="failed", error=str(e))
                 raise
         finally:

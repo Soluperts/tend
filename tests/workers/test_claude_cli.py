@@ -204,7 +204,7 @@ async def test_consume_stream_resets_on_user_turn(tmp_path):
 class _FakeProc:
     """Stand-in for asyncio.subprocess.Process."""
 
-    def __init__(self, events: list[bytes], returncode: int = 0):
+    def __init__(self, events: list[bytes], returncode: int = 0, stderr_lines=()):
         self._events = events
         self.returncode = returncode
         self.stdin = MagicMock()
@@ -212,7 +212,7 @@ class _FakeProc:
         self.stdin.drain = AsyncMock()
         self.stdin.close = MagicMock()
         self.stdout = self._async_iter(events)
-        self.stderr = self._async_iter([])
+        self.stderr = self._async_iter(stderr_lines)
         self.wait = AsyncMock(return_value=returncode)
         self.kill = MagicMock()
 
@@ -422,3 +422,42 @@ async def test_run_claude_writes_system_prompt_file(store, mock_bus):
     assert "--append-system-prompt-file" in args
     spf = args[args.index("--append-system-prompt-file") + 1]
     assert Path(spf).read_text() == "You are a helper."
+
+
+async def test_run_claude_session_id_is_canonical_uuid(store, mock_bus):
+    """claude --session-id rejects hex-only strings; must be 8-4-4-4-12 UUID."""
+    import re
+    from tend.workers.claude_cli import ClaudeCliWorker, ClaudeRunSpec
+
+    proc = _FakeProc([_make_event("k"), _result_event()], returncode=0)
+    factory = _make_factory(proc)
+    worker = ClaudeCliWorker("w", bus=mock_bus, store=store, subprocess_factory=factory)
+
+    await worker.run_claude(ClaudeRunSpec(prompt="hi"))
+    args = factory.captured["args"]
+    assert "--session-id" in args
+    sid = args[args.index("--session-id") + 1]
+    # Canonical UUID, e.g. 550e8400-e29b-41d4-a716-446655440000
+    assert re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", sid
+    ), f"session id {sid!r} is not a canonical UUID"
+
+
+async def test_run_claude_failure_surfaces_stderr(store, mock_bus):
+    """When claude exits non-zero, its stderr message must appear in the
+    failure record so the operator isn't left with an opaque exit code."""
+    from tend.workers.claude_cli import ClaudeCliWorker, ClaudeRunSpec
+
+    proc = _FakeProc(
+        [], returncode=1,
+        stderr_lines=[b"Error: Invalid session ID. Must be a valid UUID.\n"],
+    )
+    factory = _make_factory(proc)
+    worker = ClaudeCliWorker("w", bus=mock_bus, store=store, subprocess_factory=factory)
+
+    with pytest.raises(RuntimeError, match="Invalid session ID"):
+        await worker.run_claude(ClaudeRunSpec(prompt="hi"))
+
+    rows = store.list_recent(limit=10)
+    assert len(rows) == 1
+    assert "Invalid session ID" in (rows[0].error or "")

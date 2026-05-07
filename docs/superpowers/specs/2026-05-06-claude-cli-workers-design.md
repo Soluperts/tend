@@ -128,6 +128,9 @@ class ClaudeCliWorker(BaseAgent):
         self._store = store
 
     async def run_claude(self, spec: ClaudeRunSpec) -> SessionEntry:
+        # Note: `claude --session-id` requires a canonical 8-4-4-4-12 UUID
+        # (with dashes). Using the hex-only form fails fast with
+        # "Error: Invalid session ID. Must be a valid UUID." See _new_session_id.
         session_id = spec.resume_session_id or _new_session_id()
 
         # 1. Write the "running" record to disk before we spawn anything.
@@ -175,9 +178,21 @@ class ClaudeCliWorker(BaseAgent):
         await proc.stdin.drain()
         proc.stdin.close()
 
+        # Read stderr concurrently — claude's actual error message lands
+        # there on argparse / auth / config failures. If we don't drain it
+        # the OS pipe buffer can fill and stall the process; if we don't
+        # capture it the operator is left with an opaque exit code.
+        stderr_task = asyncio.create_task(_drain_stderr(proc.stderr))
         try:
             final_text, usage = await self._consume_stream(session_id, proc.stdout)
-            await proc.wait()
+            rc = await proc.wait()
+            stderr_text = await stderr_task
+            if rc != 0:
+                # Surface the trailing few stderr lines in the error record.
+                detail = " | ".join(stderr_text.strip().splitlines()[-3:])
+                msg = f"claude exited with code {rc}" + (f": {detail}" if detail else "")
+                entry = self._store.complete(session_id, status="failed", error=msg)
+                raise RuntimeError(msg)
             entry = self._store.complete(
                 session_id, status="done",
                 spoken_summary=final_text,
@@ -185,6 +200,8 @@ class ClaudeCliWorker(BaseAgent):
             )
         except Exception as exc:
             proc.kill()
+            if not stderr_task.done():
+                stderr_task.cancel()
             entry = self._store.complete(session_id, status="failed", error=str(exc))
             raise
         return entry
@@ -215,8 +232,26 @@ class ClaudeCliWorker(BaseAgent):
 
 
 def _new_session_id() -> str:
-    # Short, safe, unique. Matches openclaw's session-id regex.
-    return uuid.uuid4().hex
+    # Canonical 8-4-4-4-12 UUID. `uuid.uuid4().hex` (no dashes) is rejected
+    # by `claude --session-id` with "Invalid session ID. Must be a valid UUID."
+    return str(uuid.uuid4())
+
+
+async def _drain_stderr(stderr) -> str:
+    """Read claude's stderr to a string. Bounded (~64 KiB) so a runaway
+    process can't blow up memory. Cancellation-safe: returns whatever we
+    captured so far. Stderr is only used to enrich error messages, never
+    as primary signal."""
+    chunks, total, LIMIT = [], 0, 64 * 1024
+    try:
+        async for line in stderr:
+            chunks.append(line)
+            total += len(line)
+            if total >= LIMIT:
+                break
+    except asyncio.CancelledError:
+        pass
+    return b"".join(chunks).decode("utf-8", errors="replace")
 ```
 
 That's the entire base class. About 100 lines. Subclasses get small.
@@ -266,6 +301,46 @@ class MealPlanWorker(ClaudeCliWorker):
 
 Same shape every workflow follows. The only things that vary between meal-plan, fitness-plan, routine-planning, etc. are: the system prompt, the allowed MCP tools, and the announce text. And of those three, two — allowed tools and the model choice — live in config, not code.
 
+### The coding worker — DeskClaw's escape hatch
+
+DeskClaw's user-facing capabilities are workflow workers: meal-plan, fitness-plan, routine planning, reminders, dashboard. Coding is *not* one of those. The `CodingWorker` exists so that when DeskClaw needs to *build* something to enable a workflow — a small parser, a glue script, a one-off tool — it can dispatch the build job to a claude-cli worker and accumulate the result somewhere persistent. It's the escape hatch, not a top-level feature.
+
+Because of that framing, the coding worker has two simplifications relative to what you might expect:
+
+1. **One persistent workspace, not per-job worktrees.** All coding tasks share `~/.tend/workspace/` (configurable via `[workers.coding].workspace_dir` in `tend.toml`). DeskClaw's accumulated tools live there. There is no per-job git-worktree isolation, no auto-created branch, no cleanup. If you want history, `git init` the workspace yourself once.
+
+2. **The LLM does not pick a repo.** Brain's `code_in(request)` tool takes only `request: str`. The cwd is fixed to the workspace. This keeps the surface area small and matches DeskClaw's intent — coding is for the assistant's own infrastructure, not a generic "code in any repo" agent.
+
+```python
+# src/tend/workers/coding.py (excerpt)
+
+DEFAULT_WORKSPACE = Path.home() / ".tend" / "workspace"
+
+class CodingWorker(ClaudeCliWorker):
+    def __init__(self, name, *, bus, store, config, workspace_dir=None):
+        super().__init__(name, bus=bus, store=store)
+        self._config = config
+        self._workspace_dir = workspace_dir or _resolve_workspace(config)
+
+    @task
+    async def code_in(self, message) -> None:
+        request = str(message.payload["request"])
+        resume_id = message.payload.get("resume_session_id")
+        workspace = await asyncio.to_thread(self._ensure_workspace)
+        spec = ClaudeRunSpec(
+            prompt=request,
+            resume_session_id=resume_id,
+            allowed_tools=self._config.allowed_tools,
+            setting_sources=self._config.setting_sources,
+            model=self._config.model,
+            cwd=workspace,                  # always the same dir
+        )
+        entry = await self.run_claude(spec)
+        await self._announce(message.task_id, entry)
+```
+
+Resumes pass `--resume <session-id>` (canonical UUID) and still cwd into the same workspace; claude itself remembers the per-session state from disk.
+
 ### Worker config in `tend.toml`
 
 The example above reads `allowed_tools`, `setting_sources`, and `model` from a per-worker config block. The actual MCP names (`mcp__google_calendar__*` vs `mcp__calendar__*` etc.) depend on what `claude mcp add ...` was run with on this Pi, so they belong in config, not pinned in source.
@@ -283,6 +358,7 @@ allowed_tools = [
   "WebSearch", "WebFetch",
   "mcp__*",                              # any installed MCP, in case claude wants it
 ]
+workspace_dir = "~/.tend/workspace"      # persistent shared workspace
 
 [workers.meal_plan]
 model = "claude-sonnet-4-6"
@@ -313,13 +389,16 @@ class WorkerConfig(BaseModel):
     setting_sources: str = "user"
     allowed_tools: list[str] = []
     mcp_config_path: str | None = None    # optional explicit --mcp-config override
+    workspace_dir: str | None = None      # CodingWorker only — see "The coding worker"
 
 class Settings(BaseSettings):
     # ... existing fields ...
     workers: dict[str, WorkerConfig] = {}
 ```
 
-The wiring is one line in the runner setup — each worker is constructed with `config=settings.workers.get(worker_name) or WorkerConfig()`. If a worker has no config block, sensible defaults apply (no allowlist → claude's full default tool surface gets in, which fails closed because `--allowedTools` empty disallows everything; we'll start with conservative defaults).
+The wiring is one line in the runner setup — each worker is constructed with `config=settings.workers.get(worker_name) or WorkerConfig()`.
+
+⚠️ **Empty `allowed_tools` does NOT lock claude down.** Omitting `--allowedTools` from the argv lets claude run with its full default tool surface (Bash, file editing, web search, web fetch). To actually restrict, you have to pass an explicit non-empty list. Because of that, when a worker dispatches with `allowed_tools=[]` (i.e. no `[workers.<name>]` block in `tend.toml`, or one with an empty list), `ClaudeCliWorker.run_claude` emits a loud warning at the start of the run. The warning is the loud signal; we deliberately did not error out at boot, so workers that genuinely want full access can opt in by configuring `allowed_tools = ["*"]` once that intent is explicit. (See open question #4.)
 
 A note on the `mcp__*` wildcard: passing `mcp__*` allows every MCP-prefixed tool. Useful for the coding worker where Claude may need any tool you've installed. Less appropriate for narrow workers like meal-plan, where you want to be explicit so the model doesn't wander off and read your email when asked to plan dinner.
 
@@ -350,8 +429,8 @@ So we put a small persistent record next to each session, written to disk before
 │                                   # (every JSONL event from claude's stream)
 ├── system-prompts/
 │   └── <session_id>.txt            # system prompt used for that session
-└── worktrees/
-    └── <session_id>/               # used only by CodingWorker
+└── workspace/                      # the persistent CodingWorker workspace
+                                    # — see "The coding worker" below
 ```
 
 `sessions.json` is the index, keyed by session ID. Each value is a `SessionEntry`:
@@ -882,7 +961,7 @@ If you ask the next day, Brain may not have the session ID in its current contex
 1. **Concurrent claude sessions.** Can two workers spawn `claude` at the same time without OAuth-token contention? Almost certainly yes (the credentials file is read-only at session start and tokens auto-refresh), but worth a quick test before we ship.
 2. **Should Brain be allowed to dispatch to a worker that already has an in-flight session for the same workflow?** v1 default: yes, allow concurrency, no global lock. If it turns out two meal-plan jobs racing produces noisy Sheet edits, we add per-worker mutexes.
 3. **Setting-sources policy per worker.** `CodingWorker` probably wants `user,project,local` so a project's CLAUDE.md is loaded; everything else probably wants `user`. Worth making it a `ClaudeRunSpec` field with a sensible per-worker default.
-4. **Default `allowed_tools` when a worker has no config block.** Empty list means claude is allowed nothing; that's safe but unusable. Possible defaults: (a) error out at boot if a registered worker class has no config block (forces explicit setup), (b) fall back to a `[workers.default]` block that grants e.g. `Read,Grep` only. Lean toward (a) — silent fallbacks hide misconfiguration.
+4. **Default `allowed_tools` when a worker has no config block.** *Resolved (deferred-strict): for v1, an empty `allowed_tools` list silently means "no `--allowedTools` flag", which gives claude its full default tool surface. To prevent this becoming an invisible footgun, `run_claude` emits a loud warning whenever it spawns claude with `allowed_tools=[]`. Boot does not error out, so a fresh worker still works in development. Revisit if a real workflow ships with a missing config block in production.*
 
 
 
