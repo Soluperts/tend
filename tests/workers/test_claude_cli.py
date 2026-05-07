@@ -162,6 +162,40 @@ async def test_consume_stream_handles_no_assistant_text(tmp_path):
     assert usage == {"total_cost_usd": None}
 
 
+async def test_consume_stream_resets_on_user_turn(tmp_path):
+    """Multi-turn streams (assistant narration → tool_use → tool_result →
+    final assistant) must yield only the last assistant turn's text — not
+    the concatenation of all narration steps."""
+    from tend.workers.claude_cli import _consume_stream
+
+    events = [
+        # Turn 1: pre-tool narration we do NOT want spoken.
+        (json.dumps({
+            "type": "assistant",
+            "message": {"content": [
+                {"type": "text", "text": "Let me read the file..."},
+                {"type": "tool_use", "name": "Read", "input": {}, "id": "x"},
+            ]},
+        }) + "\n").encode(),
+        # Turn boundary: tool_result arrives in a user event.
+        (json.dumps({
+            "type": "user",
+            "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "x", "content": "..."},
+            ]},
+        }) + "\n").encode(),
+        # Turn 2: the actual final answer.
+        (json.dumps({
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "Done — renamed two files."}]},
+        }) + "\n").encode(),
+        (json.dumps({"type": "result", "subtype": "success"}) + "\n").encode(),
+    ]
+    final, _ = await _consume_stream(_async_iter(events), tmp_path / "t.jsonl")
+    assert final == "Done — renamed two files."
+    assert "Let me read" not in final
+
+
 # ---------------------------------------------------------------------------
 # ClaudeCliWorker.run_claude tests
 # ---------------------------------------------------------------------------
@@ -334,15 +368,44 @@ async def test_run_claude_cancelled_marks_killed_and_kills_proc(store, mock_bus)
 async def test_run_claude_resume_uses_resume_arg(store, mock_bus):
     from tend.workers.claude_cli import ClaudeCliWorker, ClaudeRunSpec
 
-    proc = _FakeProc([_make_event("k"), _result_event()], returncode=0)
+    # Seed the store with a completed prior session so resume has something
+    # to touch.
+    store.start(session_id="prev-1", worker="w", request="initial", cwd=None)
+    store.complete(
+        "prev-1", status="done",
+        spoken_summary="initial done", usage={"total_cost_usd": 0.05},
+    )
+
+    proc = _FakeProc([_make_event("k"), _result_event(0.02)], returncode=0)
     factory = _make_factory(proc)
     worker = ClaudeCliWorker("w", bus=mock_bus, store=store, subprocess_factory=factory)
 
-    await worker.run_claude(ClaudeRunSpec(prompt="more", resume_session_id="prev-1"))
+    final = await worker.run_claude(
+        ClaudeRunSpec(prompt="more", resume_session_id="prev-1"),
+    )
     args = factory.captured["args"]
     assert "--resume" in args
     assert args[args.index("--resume") + 1] == "prev-1"
     assert "--session-id" not in args
+    # The resume completed, so the row is now "done" with the new summary
+    # and the new cost. Prior cost from the first turn is overwritten by
+    # the second turn's cost (claude reports cumulative-or-per-turn at
+    # subprocess level — we accept whichever it gives us).
+    assert final.status == "done"
+    assert final.spoken_summary == "k"
+
+
+async def test_run_claude_resume_unknown_session_raises(store, mock_bus):
+    from tend.workers.claude_cli import ClaudeCliWorker, ClaudeRunSpec
+
+    proc = _FakeProc([], returncode=0)
+    factory = _make_factory(proc)
+    worker = ClaudeCliWorker("w", bus=mock_bus, store=store, subprocess_factory=factory)
+
+    with pytest.raises(RuntimeError, match="Cannot resume"):
+        await worker.run_claude(
+            ClaudeRunSpec(prompt="x", resume_session_id="never-existed"),
+        )
 
 
 async def test_run_claude_writes_system_prompt_file(store, mock_bus):

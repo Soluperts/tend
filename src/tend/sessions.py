@@ -118,6 +118,24 @@ class SessionStore:
         row = idx.get(session_id)
         return self._entry_from_dict(row) if row else None
 
+    def touch(self, session_id: str) -> SessionEntry:
+        """Bump `last_interaction_at` and reset status to "running" for an
+        existing session — used when resuming, so the entry's prior
+        spoken_summary, cost_usd, ended_at, and error fields are preserved.
+
+        Raises KeyError if the session is unknown.
+        """
+        def patch(idx: dict) -> None:
+            if session_id not in idx:
+                raise KeyError(f"No session {session_id!r} in index to resume")
+            row = idx[session_id]
+            row["status"] = "running"
+            row["last_interaction_at"] = _now_ms()
+            # Clear ended_at so it gets reset by the next complete() call.
+            row["ended_at"] = None
+        self._update(patch)
+        return self._entry_from_dict(self._read_index()[session_id])
+
     def transcript_path(self, session_id: str) -> Path:
         return self.root / "sessions" / f"{session_id}.jsonl"
 

@@ -108,3 +108,26 @@ def test_index_round_trip_via_disk(tmp_path):
     s2 = SessionStore(root=tmp_path)
     rows = s2.list_recent(limit=10)
     assert len(rows) == 1 and rows[0].status == "done" and rows[0].spoken_summary == "ok"
+
+
+def test_touch_preserves_prior_fields_on_resume(store):
+    """Resuming via touch() must preserve spoken_summary / cost_usd / error
+    from the prior completion — only status, last_interaction_at, and
+    ended_at change."""
+    store.start(session_id="r", worker="coding", request="initial", cwd="/tmp")
+    store.complete(
+        "r", status="done",
+        spoken_summary="renamed 5 files",
+        usage={"total_cost_usd": 0.07},
+    )
+    touched = store.touch("r")
+    assert touched.status == "running"
+    assert touched.spoken_summary == "renamed 5 files"  # preserved
+    assert touched.cost_usd == 0.07                      # preserved
+    assert touched.ended_at is None                      # cleared
+    assert touched.last_interaction_at >= touched.started_at
+
+
+def test_touch_unknown_session_raises(store):
+    with pytest.raises(KeyError):
+        store.touch("nope")

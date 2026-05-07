@@ -219,6 +219,13 @@ class Brain(LLMAgent):
         match = next((r for r in rows if r.session_id.startswith(session_id)), None)
         if not match:
             return f"Couldn't find session '{session_id}'."
+        # v1: only the coding worker can be resumed. When more workers learn
+        # to resume, replace this with a registry lookup keyed on match.worker.
+        if match.worker != "coding":
+            return (
+                f"Session {match.session_id[:8]} belongs to worker "
+                f"'{match.worker}', which doesn't support resuming yet."
+            )
         await self._ensure_coding_worker()
         await self.request_task(
             match.worker,

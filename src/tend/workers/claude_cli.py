@@ -129,8 +129,14 @@ async def _consume_stream(
     stdout: AsyncIterator[bytes],
     transcript_path: Path,
 ) -> tuple[str, dict]:
-    """Read claude's JSONL event stream. Tee to disk, extract final assistant
-    text and the trailing `result` event's usage dict."""
+    """Read claude's JSONL event stream. Tee to disk, extract the LAST
+    assistant turn's text and the trailing `result` event's usage dict.
+
+    User events (which carry tool_result blocks) mark turn boundaries, so
+    we reset the text buffer on each one. That way `final_parts` only holds
+    the assistant's last response — what TTS should speak — rather than the
+    concatenation of every narration chunk across a multi-step tool loop.
+    """
     final_parts: list[str] = []
     usage: dict = {}
     transcript_path.parent.mkdir(parents=True, exist_ok=True)
@@ -142,7 +148,11 @@ async def _consume_stream(
             except json.JSONDecodeError:
                 continue
             t = ev.get("type")
-            if t == "assistant":
+            if t == "user":
+                # Turn boundary — drop intermediate narration so we keep only
+                # the last assistant turn's text.
+                final_parts.clear()
+            elif t == "assistant":
                 for block in ev.get("message", {}).get("content", []):
                     if block.get("type") == "text":
                         final_parts.append(block.get("text", ""))
@@ -183,12 +193,36 @@ class ClaudeCliWorker(BaseAgent):
         )
 
         # 1. Persist a "running" record before doing anything risky.
-        self._store.start(
-            session_id=session_id,
-            worker=self.name,
-            request=spec.prompt[:200],
-            cwd=str(spec.cwd) if spec.cwd else None,
-        )
+        if spec.resume_session_id:
+            # Preserve prior fields (spoken_summary, cost_usd, ended_at, error).
+            try:
+                self._store.touch(session_id)
+            except KeyError:
+                # Stale resume id — fail clearly instead of fabricating a row.
+                raise RuntimeError(
+                    f"Cannot resume session {session_id!r}: not in store. "
+                    "It may have been pruned, or never existed."
+                )
+        else:
+            self._store.start(
+                session_id=session_id,
+                worker=self.name,
+                request=spec.prompt[:200],
+                cwd=str(spec.cwd) if spec.cwd else None,
+            )
+
+        # 1a. Warn loud-and-clear if the worker is dispatching with no
+        # allowed_tools restriction — that means claude gets its full default
+        # tool surface (Bash, file editing, web search, …). Almost certainly
+        # not intended; it usually indicates a missing [workers.<name>] block
+        # in tend.toml.
+        if not spec.allowed_tools and not spec.resume_session_id:
+            from loguru import logger
+            logger.warning(
+                f"{self.name}: spawning claude with no --allowedTools "
+                "restriction. Claude has full tool access. "
+                "Set [workers.<name>].allowed_tools in tend.toml to restrict."
+            )
 
         # 2. System prompt → file (only on first run).
         sys_path = None

@@ -93,6 +93,18 @@ async def test_continue_session_unknown_id(brain):
     assert "no session" in out.lower() or "couldn't find" in out.lower()
 
 
+async def test_continue_session_rejects_non_coding_worker(brain, store):
+    """Only the coding worker can be resumed in v1."""
+    store.start(session_id="rem1", worker="reminder", request="x", cwd=None)
+    brain.request_task = AsyncMock()
+    out = await brain.continue_session(
+        MagicMock(), session_id="rem1", follow_up="and again",
+    )
+    brain.request_task.assert_not_awaited()
+    assert "reminder" in out.lower()
+    assert "doesn't support" in out.lower() or "not support" in out.lower()
+
+
 async def test_list_recent_jobs_no_store(brain_no_store):
     out = await brain_no_store.list_recent_jobs(MagicMock(), limit=5)
     assert "unavailable" in out.lower()
