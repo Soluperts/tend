@@ -10,8 +10,10 @@ See docs/superpowers/specs/2026-05-07-deskclaw-skills-and-general-worker-design.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 from xml.sax.saxutils import escape as _xml_escape
 
 from loguru import logger
@@ -139,3 +141,95 @@ def format_catalog_xml(skills: list[SkillInfo]) -> str:
         lines.append("  </skill>")
     lines.append("</available-skills>")
     return "\n".join(lines)
+
+
+Severity = Literal["critical", "warn"]
+
+
+@dataclass(frozen=True)
+class ScanFinding:
+    rule: str
+    severity: Severity
+    line: int  # 1-based
+    snippet: str
+
+
+@dataclass(frozen=True)
+class ScanReport:
+    findings: tuple[ScanFinding, ...]
+
+    @property
+    def is_critical(self) -> bool:
+        return any(f.severity == "critical" for f in self.findings)
+
+    @property
+    def is_clean(self) -> bool:
+        return len(self.findings) == 0
+
+
+# Each rule: (rule_id, severity, compiled regex). Patterns are intentionally
+# narrow — false positives go to quarantine, which is friction the user
+# can't bypass without inspection, so we err toward precision over recall.
+_RULES: list[tuple[str, Severity, re.Pattern[str]]] = [
+    (
+        "prompt-injection-ignore-instructions",
+        "critical",
+        re.compile(
+            r"\bignore\b[^.\n]{0,40}\b(prior|previous|above|earlier|system)\s+instructions?\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "prompt-injection-system",
+        "critical",
+        re.compile(
+            r"\b(disregard|override)\b[^.\n]{0,40}\b(system\s+prompt|developer\s+message|hidden\s+instructions?)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "prompt-injection-tool",
+        "critical",
+        re.compile(
+            r"\b(bypass|skip)\s+(?:tool\s+)?(approval|permission|consent)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "shell-pipe-to-shell",
+        "critical",
+        re.compile(r"\b(curl|wget)\b[^\n]*\|\s*(?:sudo\s+)?(sh|bash|zsh)\b", re.IGNORECASE),
+    ),
+    (
+        "secret-exfiltration",
+        "critical",
+        re.compile(
+            r"\b(curl|wget|nc)\b[^\n]*\$\{?(ANTHROPIC_API_KEY|DEEPGRAM_API_KEY|ELEVENLABS_API_KEY|OPENAI_API_KEY|AWS_SECRET_ACCESS_KEY|GITHUB_TOKEN)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "destructive-delete",
+        "warn",
+        re.compile(r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f?[a-zA-Z]*\s+(/|~|\$HOME)", re.IGNORECASE),
+    ),
+    (
+        "unsafe-permissions",
+        "warn",
+        re.compile(r"\bchmod\s+0?777\b", re.IGNORECASE),
+    ),
+]
+
+
+def scan_text(text: str) -> ScanReport:
+    """Run the v1 safety rules over a blob of text. No I/O."""
+    findings: list[ScanFinding] = []
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        for rule_id, severity, pattern in _RULES:
+            m = pattern.search(line)
+            if m:
+                findings.append(ScanFinding(
+                    rule=rule_id, severity=severity, line=lineno,
+                    snippet=line.strip()[:200],
+                ))
+    return ScanReport(findings=tuple(findings))
