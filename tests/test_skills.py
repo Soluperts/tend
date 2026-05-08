@@ -1,8 +1,11 @@
 import textwrap
+from pathlib import Path
+
 import pytest
 
 from tend.skills import (
     enumerate_skills,
+    format_catalog_xml,
     parse_frontmatter,
     SkillFrontmatter,
     SkillFrontmatterError,
@@ -104,3 +107,30 @@ def test_enumerate_skills_skips_malformed(tmp_path, caplog):
 
 def test_enumerate_skills_missing_root(tmp_path):
     assert enumerate_skills(tmp_path / "nope") == []
+
+
+def test_format_catalog_xml_empty():
+    assert format_catalog_xml([]) == ""
+
+
+def test_format_catalog_xml_renders_skills(tmp_path):
+    skills = [
+        SkillInfo(name="alpha", description="A desc", path=Path("/x/alpha/SKILL.md")),
+        SkillInfo(name="beta",  description="B desc", path=Path("/x/beta/SKILL.md")),
+    ]
+    out = format_catalog_xml(skills)
+    assert "<available-skills>" in out
+    assert "</available-skills>" in out
+    assert "<name>alpha</name>" in out
+    assert "<description>A desc</description>" in out
+    assert "<path>/x/alpha/SKILL.md</path>" in out
+    assert "<name>beta</name>" in out
+
+
+def test_format_catalog_xml_escapes_special_chars():
+    skills = [SkillInfo(
+        name="x", description="A & B <c> \"d\"", path=Path("/p/SKILL.md"),
+    )]
+    out = format_catalog_xml(skills)
+    assert "A &amp; B &lt;c&gt; &quot;d&quot;" in out
+    assert "<description>A & B" not in out  # raw ampersand must not appear

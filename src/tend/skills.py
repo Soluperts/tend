@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from xml.sax.saxutils import escape as _xml_escape
 
 from loguru import logger
 
@@ -109,3 +110,26 @@ def enumerate_skills(root: Path) -> list[SkillInfo]:
         ))
     out.sort(key=lambda s: s.name)
     return out
+
+
+def format_catalog_xml(skills: list[SkillInfo]) -> str:
+    """Render the <available-skills> XML block for the worker prompt.
+
+    Returns "" for an empty list so the caller can omit the section
+    entirely without a special case.
+    """
+    if not skills:
+        return ""
+    lines = ["<available-skills>"]
+    for s in skills:
+        lines.append("  <skill>")
+        lines.append(f"    <name>{_xml_escape(s.name, {'\"': '&quot;'})}</name>")
+        lines.append(
+            f"    <description>{_xml_escape(s.description, {'\"': '&quot;'})}</description>"
+        )
+        lines.append(
+            f"    <path>{_xml_escape(str(s.path), {'\"': '&quot;'})}</path>"
+        )
+        lines.append("  </skill>")
+    lines.append("</available-skills>")
+    return "\n".join(lines)
