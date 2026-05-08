@@ -312,9 +312,10 @@ v1 rules:
 | Destructive delete | warn | broad `rm -rf` over `~`, `/`, `$HOME` |
 | Unsafe perms | warn | `chmod 777` |
 
-Files scanned: any `SKILL.md` body and any new file under
-`~/.tend/workspace/bin/` written during the same task. The scanner runs in
-the worker process before claude is invited to execute the new skill.
+Files scanned: any `SKILL.md` body written under `~/.tend/skills/` during
+the same task. (v1 limitation: the post-hoc pass does not currently
+re-scan files written under `~/.tend/workspace/bin/`. Adding that scope
+is tracked in Open questions.)
 
 Quarantine semantics:
 
@@ -385,6 +386,12 @@ day-session reset, and the Pro/Max plan billing path.
   do*). v1's answer: log the finding, quarantine, let the user move it
   manually. We accept some friction here to keep the auto-build path
   honest.
+- **Post-hoc scan covers SKILL.md only in v1.** The earlier "Files scanned"
+  paragraph implies `~/.tend/workspace/bin/*` files would also be scanned
+  after claude exits. The v1 implementation only scans SKILL.md. The
+  in-claude `tend scan-skill` step (preamble step 2c) remains the load-
+  bearing check; the post-hoc pass is defense-in-depth for skills, not
+  scripts. Extending post-hoc to bin/* is a v2 follow-up.
 
 ## What this enables once shipped
 

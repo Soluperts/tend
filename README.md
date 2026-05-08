@@ -64,6 +64,8 @@ $EDITOR soul.md    # optionally tune the assistant's persona
 | `awake_timeout_s` | `tend.toml` | Silence (seconds) before auto-sleep. Default 30. |
 | `daily_reset_time` | `tend.toml` | Wall-clock daily session reset (`HH:MM`). Default 04:00. |
 | `soul_path` | `tend.toml` | Path to the persona/context file. Default `soul.md`. |
+| `TEND_SKILLS_ROOT` | env var | Override the directory the CLI and `list_skills` tool read from. Defaults to `~/.tend/skills`. The GeneralWorker uses `[workers.general].skills_dir` instead. |
+| `TEND_SKILLS_QUARANTINE_ROOT` | env var | Override the directory `tend skills quarantined` reads from. Defaults to `~/.tend/skills-quarantined`. |
 
 If a configured cloud service preflight fails (bad key, no credit, network), tend logs the reason and falls back to its local equivalent.
 
