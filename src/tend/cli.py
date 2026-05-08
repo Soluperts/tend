@@ -252,7 +252,7 @@ def cmd_snapshot(args) -> None:
         '  "mcp__google_sheets__*",\n'
         "]\n"
         "```\n\n"
-        "For a coding worker with full tool access:\n\n"
+        "For the general worker with full tool access:\n\n"
         "```toml\n"
         "[workers.general]\n"
         'model = "claude-opus-4-7"\n'

@@ -1,16 +1,18 @@
 """GeneralWorker — runs `claude` inside the persistent deskclaw workspace.
 
-DeskClaw's main job isn't coding — it's meal plans, fitness, routines,
-reminders, dashboards. The coding worker is the escape hatch: when the
-assistant decides it needs to *build* something to enable a workflow
-(a small script, a parser, a glue tool), it dispatches a coding task here.
+The worker is general-purpose: capability comes from markdown skills under
+`~/.tend/skills/<name>/SKILL.md`. At spawn time the worker enumerates the
+catalog and injects a compact `<available-skills>` XML block into claude's
+system prompt; claude reads full SKILL.md bodies on demand. When no skill
+matches an incoming request, claude may author a new SKILL.md plus any
+scripts under `~/.tend/workspace/bin/`; a regex safety scanner runs after
+claude exits and quarantines anything with critical findings.
 
-All coding tasks share a single persistent workspace directory (default
-`~/.tend/workspace/`). There is no per-job isolation — DeskClaw accumulates
-everything it builds in that one place. Resumes reuse the same cwd; claude
-itself remembers per-session state via its `--resume` flag.
+All tasks share a single persistent workspace directory (default
+`~/.tend/workspace/`). There is no per-job isolation. Resumes reuse the
+same cwd; claude itself remembers per-session state via its `--resume` flag.
 
-Brain dispatches via `request_task('coding', payload={'request': ...})`.
+Brain dispatches via `request_task('general', payload={'request': ...})`.
 For follow-ups, payload also includes `resume_session_id`.
 """
 
@@ -242,7 +244,7 @@ class GeneralWorker(ClaudeCliWorker):
         await self.send_task_response(task_id, {"delivered": True})
 
     async def _announce_error(self, task_id, request, exc):
-        spoken = "Sorry, the coding task didn't complete."
+        spoken = "Sorry, the task didn't complete."
         await self.bus.publish(BusFrameMessage(
             source=self.name,
             frame=TTSSpeakFrame(spoken),
