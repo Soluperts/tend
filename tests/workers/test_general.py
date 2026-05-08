@@ -98,7 +98,7 @@ async def test_coding_worker_runs_claude_in_workspace(
     worker.send_task_update = AsyncMock()
     worker.send_task_response = AsyncMock()
 
-    await worker.code_in(_request("rename foo to bar"))
+    await worker.do_task(_request("rename foo to bar"))
 
     # 1. claude was spawned with cwd = the workspace dir
     assert factory.kwargs["cwd"] == str(workspace)
@@ -157,7 +157,7 @@ async def test_coding_worker_resume_passes_resume_flag(
     worker.send_task_update = AsyncMock()
     worker.send_task_response = AsyncMock()
 
-    await worker.code_in(_resume_request("follow up", "prev123"))
+    await worker.do_task(_resume_request("follow up", "prev123"))
 
     # 1. --resume was passed to claude
     args = factory.args
@@ -189,7 +189,7 @@ async def test_coding_worker_announces_error_when_run_claude_fails(
     worker.send_task_update = AsyncMock()
     worker.send_task_response = AsyncMock()
 
-    await worker.code_in(_request("break things"))
+    await worker.do_task(_request("break things"))
 
     # Error TTS announced
     speaks = [
@@ -232,3 +232,159 @@ async def test_coding_worker_workspace_dir_from_config(tmp_path):
         "coding", bus=MagicMock(), store=MagicMock(), config=cfg,
     )
     assert worker._workspace_dir == tmp_path / "custom"
+
+
+@pytest.mark.asyncio
+async def test_general_worker_injects_skill_catalog_into_system_prompt(
+    tmp_path, monkeypatch
+):
+    """GeneralWorker should enumerate skills and pass them as system_prompt."""
+    from tend.sessions import SessionEntry
+    from tend.workers.general import GeneralWorker
+
+    skills_root = tmp_path / "skills"
+    (skills_root / "meal-plan").mkdir(parents=True)
+    (skills_root / "meal-plan" / "SKILL.md").write_text(
+        "---\nname: meal-plan\ndescription: Make a meal plan.\n---\nbody\n",
+        encoding="utf-8",
+    )
+
+    captured_specs = []
+
+    store = SessionStore(root=tmp_path / "store")
+    cfg = WorkerConfig(
+        allowed_tools=["Read", "Edit", "Write", "Bash"],
+        setting_sources="user",
+        workspace_dir=str(tmp_path / "workspace"),
+        skills_dir=str(skills_root),
+    )
+
+    class _StubBus:
+        async def publish(self, *a, **kw):
+            pass
+
+    worker = GeneralWorker("general", bus=_StubBus(), store=store, config=cfg)
+
+    async def fake_run_claude(spec):
+        captured_specs.append(spec)
+        now_ms = 0
+        return SessionEntry(
+            session_id="abc-123",
+            worker="general",
+            request="r",
+            status="done",
+            started_at=now_ms,
+            last_interaction_at=now_ms,
+            transcript_path=str(tmp_path / "store" / "sessions" / "abc-123.jsonl"),
+            cwd=str(tmp_path / "workspace"),
+            spoken_summary="done",
+        )
+
+    monkeypatch.setattr(worker, "run_claude", fake_run_claude)
+
+    async def _noop(*a, **kw):
+        return None
+
+    monkeypatch.setattr(worker, "_announce", _noop)
+    monkeypatch.setattr(worker, "_announce_error", _noop)
+
+    class _Msg:
+        task_id = "tid"
+        payload = {"request": "make me a meal plan"}
+
+    await worker.do_task(_Msg())
+
+    assert len(captured_specs) == 1
+    sp = captured_specs[0].system_prompt or ""
+    # The XML catalog block should be appended (newline-prefixed) at the end
+    # of the prompt. The preamble itself also contains the literal text
+    # "<available-skills>", so we anchor on the newline-prefixed form.
+    assert "\n<available-skills>" in sp
+    assert "</available-skills>" in sp
+    assert "meal-plan" in sp
+    assert "Make a meal plan." in sp
+    # The preamble itself should also be in there.
+    assert "general-purpose worker" in sp
+
+
+@pytest.mark.asyncio
+async def test_general_worker_system_prompt_omits_catalog_when_empty(
+    tmp_path, monkeypatch
+):
+    """No skills on disk → system_prompt is just the preamble (no catalog block)."""
+    from tend.sessions import SessionEntry
+    from tend.workers.general import GeneralWorker
+
+    skills_root = tmp_path / "empty-skills"  # does not exist
+
+    captured_specs = []
+    store = SessionStore(root=tmp_path / "store")
+    cfg = WorkerConfig(
+        allowed_tools=["Read"],
+        workspace_dir=str(tmp_path / "workspace"),
+        skills_dir=str(skills_root),
+    )
+
+    class _StubBus:
+        async def publish(self, *a, **kw):
+            pass
+
+    worker = GeneralWorker("general", bus=_StubBus(), store=store, config=cfg)
+
+    async def fake_run_claude(spec):
+        captured_specs.append(spec)
+        return SessionEntry(
+            session_id="x",
+            worker="general",
+            request="r",
+            status="done",
+            started_at=0,
+            last_interaction_at=0,
+            transcript_path=str(tmp_path / "x.jsonl"),
+            cwd=str(tmp_path / "workspace"),
+            spoken_summary="done",
+        )
+
+    monkeypatch.setattr(worker, "run_claude", fake_run_claude)
+
+    async def _noop(*a, **kw):
+        return None
+
+    monkeypatch.setattr(worker, "_announce", _noop)
+    monkeypatch.setattr(worker, "_announce_error", _noop)
+
+    class _Msg:
+        task_id = "tid"
+        payload = {"request": "tell me a joke"}
+
+    await worker.do_task(_Msg())
+
+    assert len(captured_specs) == 1
+    sp = captured_specs[0].system_prompt or ""
+    assert "general-purpose worker" in sp
+    # No skills on disk → no XML catalog block at the end of the prompt.
+    # (The preamble itself mentions <available-skills> in its instructions,
+    # so we look for the actual XML element opener at the start of a line.)
+    assert "\n<available-skills>" not in sp
+
+
+async def test_general_worker_default_skills_dir_resolves_under_home():
+    """If no skills_dir is configured, default to ~/.tend/skills/."""
+    from tend.workers.general import DEFAULT_SKILLS_DIR, GeneralWorker
+
+    cfg = WorkerConfig()
+    worker = GeneralWorker(
+        "general", bus=MagicMock(), store=MagicMock(), config=cfg,
+    )
+    assert worker._workspace_skills_dir == DEFAULT_SKILLS_DIR
+
+
+async def test_general_worker_skills_dir_from_config(tmp_path):
+    """An explicit `skills_dir` in WorkerConfig wins over the default."""
+    from tend.workers.general import GeneralWorker
+
+    cfg = WorkerConfig(skills_dir=str(tmp_path / "custom-skills"))
+    worker = GeneralWorker(
+        "general", bus=MagicMock(), store=MagicMock(), config=cfg,
+    )
+    assert worker._workspace_skills_dir == tmp_path / "custom-skills"

@@ -29,10 +29,12 @@ from pipecat_subagents.bus.messages import BusFrameMessage
 
 from tend.config import WorkerConfig
 from tend.sessions import SessionStore
+from tend.skills import enumerate_skills, format_catalog_xml
 from tend.workers.claude_cli import ClaudeCliWorker, ClaudeRunSpec
 
 
 DEFAULT_WORKSPACE = Path.home() / ".tend" / "workspace"
+DEFAULT_SKILLS_DIR = Path.home() / ".tend" / "skills"
 
 
 def _resolve_workspace(config: WorkerConfig) -> Path:
@@ -40,6 +42,52 @@ def _resolve_workspace(config: WorkerConfig) -> Path:
     if not raw:
         return DEFAULT_WORKSPACE
     return Path(raw).expanduser()
+
+
+def _resolve_skills_dir(config: WorkerConfig) -> Path:
+    raw = config.skills_dir
+    if not raw:
+        return DEFAULT_SKILLS_DIR
+    return Path(raw).expanduser()
+
+
+_GENERAL_PREAMBLE = """\
+You are tend's general-purpose worker. The user is a desk worker who talks
+to tend through a smart speaker; you are their hands. You run inside a
+persistent workspace at ~/.tend/workspace/ where everything you build
+accumulates.
+
+Two paths for any incoming request:
+
+1. SKILL MATCH. If <available-skills> below contains a skill matching the
+   request, Read its SKILL.md and follow the procedure exactly. Skills
+   typically tell you which scripts in ~/.tend/workspace/bin/ to invoke.
+
+2. NO SKILL MATCH. If the request is a *recurring workflow* (named inputs,
+   plausibly repeatable), build a skill for it before executing:
+   a. Author any scripts you need under ~/.tend/workspace/bin/.
+   b. Author ~/.tend/skills/<name>/SKILL.md describing the workflow.
+   c. Run `tend scan-skill <name>` via Bash. Exit 0 = run it. Exit 1 = warn,
+      review the warnings then run only if they're acceptable. Exit 2 = move
+      the skill to ~/.tend/skills-quarantined/<name>/ and announce a graceful
+      fallback to the user instead of running it.
+   d. If the scan was clean, execute the skill end-to-end.
+
+   If the request is a *one-shot* (chitchat, "what's 17x19", "tell me a
+   joke"), just answer inline; do not author a skill.
+
+Skill naming: hyphen-case lowercase, descriptive (`meal-plan`, not `mp`).
+Same-name conflicts: prefer appending or replacing a section over silent
+overwrite.
+
+Scripts must be self-contained and idempotent where reasonable. Never write
+secrets or tokens into scripts; read from environment variables.
+
+When you finish, your last assistant message becomes the spoken summary.
+Keep it short — one or two sentences for TTS. Save the long-form artifact
+to ~/.tend/workspace/plans/, ~/.tend/workspace/data/, or wherever the skill
+directs.
+"""
 
 
 class GeneralWorker(ClaudeCliWorker):
@@ -52,12 +100,14 @@ class GeneralWorker(ClaudeCliWorker):
         config: WorkerConfig,
         subprocess_factory=None,
         workspace_dir: Path | None = None,
+        skills_dir: Path | None = None,
     ):
         super().__init__(
             name, bus=bus, store=store, subprocess_factory=subprocess_factory,
         )
         self._config = config
         self._workspace_dir = workspace_dir or _resolve_workspace(config)
+        self._workspace_skills_dir = skills_dir or _resolve_skills_dir(config)
 
     def _ensure_workspace(self) -> Path:
         """Make sure the workspace dir exists. Idempotent."""
@@ -65,7 +115,7 @@ class GeneralWorker(ClaudeCliWorker):
         return self._workspace_dir
 
     @task
-    async def code_in(self, message) -> None:
+    async def do_task(self, message) -> None:
         request = str(message.payload["request"])
         resume_id = message.payload.get("resume_session_id")
 
@@ -77,8 +127,16 @@ class GeneralWorker(ClaudeCliWorker):
         # Phase 1: do the work. Failures here trigger _announce_error.
         try:
             workspace = await asyncio.to_thread(self._ensure_workspace)
+            skills = await asyncio.to_thread(
+                enumerate_skills, self._workspace_skills_dir
+            )
+            system_prompt = _GENERAL_PREAMBLE
+            catalog = format_catalog_xml(skills)
+            if catalog:
+                system_prompt = system_prompt + "\n" + catalog
             spec = ClaudeRunSpec(
                 prompt=request,
+                system_prompt=system_prompt,
                 resume_session_id=resume_id,
                 allowed_tools=self._config.allowed_tools,
                 setting_sources=self._config.setting_sources,

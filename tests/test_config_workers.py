@@ -9,6 +9,8 @@ def test_worker_config_defaults():
     assert cfg.setting_sources == "user"
     assert cfg.allowed_tools == []
     assert cfg.mcp_config_path is None
+    assert cfg.workspace_dir is None
+    assert cfg.skills_dir is None
 
 
 def test_settings_loads_workers_block_from_toml(tmp_path, monkeypatch):
@@ -41,3 +43,17 @@ def test_settings_workers_default_empty(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     s = Settings()
     assert s.workers == {}
+
+
+def test_settings_loads_skills_dir_from_toml(tmp_path, monkeypatch):
+    """An explicit skills_dir in [workers.coding] should round-trip from TOML."""
+    toml = tmp_path / "tend.toml"
+    toml.write_text(
+        """
+[workers.coding]
+skills_dir = "/tmp/custom-skills"
+"""
+    )
+    monkeypatch.chdir(tmp_path)
+    s = Settings()
+    assert s.workers["coding"].skills_dir == "/tmp/custom-skills"

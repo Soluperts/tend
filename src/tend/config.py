@@ -30,6 +30,9 @@ class WorkerConfig(BaseModel):
     # Coding worker: persistent workspace where claude builds things.
     # Resolved against `~` if it starts with `~`. None → ~/.tend/workspace/.
     workspace_dir: str | None = None
+    # General worker: directory containing skill subdirs (each with a SKILL.md).
+    # Resolved against `~` if it starts with `~`. None → ~/.tend/skills/.
+    skills_dir: str | None = None
 
 
 class Settings(BaseSettings):
