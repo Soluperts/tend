@@ -17,6 +17,7 @@ For follow-ups, payload also includes `resume_session_id`.
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 
 from loguru import logger
@@ -29,7 +30,12 @@ from pipecat_subagents.bus.messages import BusFrameMessage
 
 from tend.config import WorkerConfig
 from tend.sessions import SessionStore
-from tend.skills import enumerate_skills, format_catalog_xml
+from tend.skills import (
+    enumerate_skills,
+    format_catalog_xml,
+    quarantine_skill,
+    scan_text,
+)
 from tend.workers.claude_cli import ClaudeCliWorker, ClaudeRunSpec
 
 
@@ -125,11 +131,14 @@ class GeneralWorker(ClaudeCliWorker):
         # is marked "killed" and the subprocess is reaped.
 
         # Phase 1: do the work. Failures here trigger _announce_error.
+        # Grab task_start slightly in the past so filesystem mtime granularity
+        # (sub-second floor on most fs, plus the gap between time.time() and
+        # the actual write) doesn't cause us to miss freshly-written files.
+        task_start = time.time() - 1.0
+        skills_dir = self._workspace_skills_dir
         try:
             workspace = await asyncio.to_thread(self._ensure_workspace)
-            skills = await asyncio.to_thread(
-                enumerate_skills, self._workspace_skills_dir
-            )
+            skills = await asyncio.to_thread(enumerate_skills, skills_dir)
             system_prompt = _GENERAL_PREAMBLE
             catalog = format_catalog_xml(skills)
             if catalog:
@@ -149,17 +158,71 @@ class GeneralWorker(ClaudeCliWorker):
             await self._announce_error(message.task_id, request, e)
             return
 
-        # Phase 2: announce. A failure here must not also call _announce_error
+        # Phase 2: post-hoc safety scan of any SKILL.md files claude may have
+        # authored during the run. Critical findings → auto-quarantine. A
+        # failure during the scan must not invalidate the run itself.
+        try:
+            created, quarantined = await asyncio.to_thread(
+                self._post_run_scan, skills_dir, task_start,
+            )
+        except Exception:
+            logger.exception("post-hoc scan failed; treating run as clean")
+            created, quarantined = [], []
+
+        # Phase 3: announce. A failure here must not also call _announce_error
         # with the original exception — the work succeeded, the announce just
         # didn't land. Fall through to a separate error-announce attempt.
         try:
-            await self._announce(message.task_id, entry)
+            await self._announce(
+                message.task_id, entry,
+                created=created, quarantined=quarantined,
+            )
         except Exception as e:
             logger.exception("GeneralWorker _announce failed after successful run")
             await self._announce_error(message.task_id, request, e)
 
-    async def _announce(self, task_id, entry):
-        spoken = entry.spoken_summary or "Coding task complete."
+    def _post_run_scan(
+        self, skills_dir: Path, since_ts: float,
+    ) -> tuple[list[str], list[str]]:
+        """Scan SKILL.md files in <skills_dir> with mtime >= since_ts.
+
+        Returns (created, quarantined): names of skills that landed cleanly
+        versus those moved to <skills_dir>/../skills-quarantined/. Files that
+        existed before the task are ignored.
+        """
+        created: list[str] = []
+        quarantined: list[str] = []
+        if not skills_dir.exists():
+            return created, quarantined
+        quarantine_root = skills_dir.parent / "skills-quarantined"
+        # Sort for stable iteration order in tests + announcements.
+        for child in sorted(skills_dir.iterdir()):
+            if not child.is_dir():
+                continue
+            skill_md = child / "SKILL.md"
+            if not skill_md.is_file():
+                continue
+            if skill_md.stat().st_mtime < since_ts:
+                continue
+            try:
+                text = skill_md.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            report = scan_text(text)
+            if report.is_critical:
+                quarantine_skill(
+                    name=child.name,
+                    skills_root=skills_dir,
+                    quarantine_root=quarantine_root,
+                    findings=report.findings,
+                )
+                quarantined.append(child.name)
+            else:
+                created.append(child.name)
+        return created, quarantined
+
+    async def _announce(self, task_id, entry, *, created=None, quarantined=None):
+        spoken = entry.spoken_summary or "Task complete."
         await self.bus.publish(BusFrameMessage(
             source=self.name,
             frame=TTSSpeakFrame(spoken),
@@ -172,6 +235,8 @@ class GeneralWorker(ClaudeCliWorker):
                 "session_id": entry.session_id,
                 "workspace": entry.cwd,
                 "request": entry.request,
+                "skills_created": list(created or []),
+                "skills_quarantined": list(quarantined or []),
             },
         })
         await self.send_task_response(task_id, {"delivered": True})
