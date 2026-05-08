@@ -1,7 +1,13 @@
 import textwrap
 import pytest
 
-from tend.skills import parse_frontmatter, SkillFrontmatter, SkillFrontmatterError
+from tend.skills import (
+    enumerate_skills,
+    parse_frontmatter,
+    SkillFrontmatter,
+    SkillFrontmatterError,
+    SkillInfo,
+)
 
 
 def test_parse_frontmatter_minimal():
@@ -54,3 +60,47 @@ def test_parse_frontmatter_empty_value_treated_as_missing():
 def test_parse_frontmatter_unterminated():
     with pytest.raises(SkillFrontmatterError, match="unterminated"):
         parse_frontmatter("---\nname: x\ndescription: y\nno closing fence\n")
+
+
+def _write_skill(root, name, description, body="body\n"):
+    skill_dir = root / name
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: {description}\n---\n\n{body}"
+    )
+    return skill_dir / "SKILL.md"
+
+
+def test_enumerate_skills_empty(tmp_path):
+    assert enumerate_skills(tmp_path) == []
+
+
+def test_enumerate_skills_returns_sorted_by_name(tmp_path):
+    _write_skill(tmp_path, "zeta", "z desc")
+    _write_skill(tmp_path, "alpha", "a desc")
+    _write_skill(tmp_path, "mu", "m desc")
+    skills = enumerate_skills(tmp_path)
+    assert [s.name for s in skills] == ["alpha", "mu", "zeta"]
+    assert [s.description for s in skills] == ["a desc", "m desc", "z desc"]
+    for s in skills:
+        assert s.path.is_absolute()
+        assert s.path.name == "SKILL.md"
+
+
+def test_enumerate_skills_skips_dirs_without_skill_md(tmp_path):
+    (tmp_path / "no_skill_here").mkdir()
+    _write_skill(tmp_path, "real", "ok")
+    assert [s.name for s in enumerate_skills(tmp_path)] == ["real"]
+
+
+def test_enumerate_skills_skips_malformed(tmp_path, caplog):
+    _write_skill(tmp_path, "good", "ok")
+    bad = tmp_path / "bad"
+    bad.mkdir()
+    (bad / "SKILL.md").write_text("not valid frontmatter at all\n")
+    skills = enumerate_skills(tmp_path)
+    assert [s.name for s in skills] == ["good"]
+
+
+def test_enumerate_skills_missing_root(tmp_path):
+    assert enumerate_skills(tmp_path / "nope") == []

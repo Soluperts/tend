@@ -11,6 +11,9 @@ See docs/superpowers/specs/2026-05-07-deskclaw-skills-and-general-worker-design.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+
+from loguru import logger
 
 
 class SkillFrontmatterError(ValueError):
@@ -68,3 +71,41 @@ def parse_frontmatter(text: str) -> SkillFrontmatter:
     if not fields.get("description"):
         raise SkillFrontmatterError("frontmatter missing required key: description")
     return SkillFrontmatter(name=fields["name"], description=fields["description"])
+
+
+@dataclass(frozen=True)
+class SkillInfo:
+    name: str
+    description: str
+    path: Path
+
+
+def enumerate_skills(root: Path) -> list[SkillInfo]:
+    """Return all valid skills under <root>, sorted alphabetically by name.
+
+    Quietly skips directories without a SKILL.md and SKILL.md files whose
+    frontmatter doesn't parse — a malformed skill should not break the
+    catalog for the rest.
+    """
+    if not root.exists():
+        return []
+    out: list[SkillInfo] = []
+    for child in sorted(root.iterdir()):
+        if not child.is_dir():
+            continue
+        skill_md = child / "SKILL.md"
+        if not skill_md.is_file():
+            continue
+        try:
+            text = skill_md.read_text()
+            fm = parse_frontmatter(text)
+        except (OSError, SkillFrontmatterError) as e:
+            logger.warning(f"skipping malformed skill at {skill_md}: {e}")
+            continue
+        out.append(SkillInfo(
+            name=fm.name,
+            description=fm.description,
+            path=skill_md.resolve(),
+        ))
+    out.sort(key=lambda s: s.name)
+    return out
