@@ -242,5 +242,28 @@ def test_quarantine_skill_renames_on_collision(tmp_path):
     dest = quarantine_skill(
         name="bad", skills_root=skills_root, quarantine_root=quarantine_root, findings=(),
     )
-    assert dest.name in ("bad.1", "bad.2")  # first collision suffix
+    assert dest.name == "bad.1"
     assert dest.parent == quarantine_root
+
+
+def test_quarantine_skill_empty_findings_writes_empty_array(tmp_path):
+    skills_root = tmp_path / "skills"
+    quarantine_root = tmp_path / "skills-quarantined"
+    (skills_root / "bad").mkdir(parents=True)
+    (skills_root / "bad" / "SKILL.md").write_text("body\n")
+    dest = quarantine_skill(
+        name="bad", skills_root=skills_root, quarantine_root=quarantine_root,
+        findings=(),
+    )
+    assert json.loads((dest / "_findings.json").read_text()) == []
+
+
+def test_quarantine_skill_missing_source_raises(tmp_path):
+    skills_root = tmp_path / "skills"
+    quarantine_root = tmp_path / "skills-quarantined"
+    skills_root.mkdir()
+    with pytest.raises(FileNotFoundError):
+        quarantine_skill(
+            name="ghost", skills_root=skills_root,
+            quarantine_root=quarantine_root, findings=(),
+        )

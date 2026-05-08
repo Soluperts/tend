@@ -245,7 +245,7 @@ def atomic_write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=str(path.parent))
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
         os.replace(tmp, path)
     except BaseException:
@@ -280,5 +280,5 @@ def quarantine_skill(
         {"rule": f.rule, "severity": f.severity, "line": f.line, "snippet": f.snippet}
         for f in findings
     ]
-    (dest / "_findings.json").write_text(json.dumps(findings_data, indent=2))
+    (dest / "_findings.json").write_text(json.dumps(findings_data, indent=2), encoding="utf-8")
     return dest
