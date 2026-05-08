@@ -1,4 +1,3 @@
-from pathlib import Path
 import textwrap
 import pytest
 
@@ -43,6 +42,12 @@ def test_parse_frontmatter_missing_name():
 def test_parse_frontmatter_missing_description():
     text = "---\nname: x\n---\nbody"
     with pytest.raises(SkillFrontmatterError, match="description"):
+        parse_frontmatter(text)
+
+
+def test_parse_frontmatter_empty_value_treated_as_missing():
+    text = "---\nname:\ndescription: y\n---\nbody"
+    with pytest.raises(SkillFrontmatterError, match="name"):
         parse_frontmatter(text)
 
 

@@ -63,8 +63,8 @@ def parse_frontmatter(text: str) -> SkillFrontmatter:
         raise SkillFrontmatterError("unterminated frontmatter (no closing ---)")
     if bad_line is not None:
         raise SkillFrontmatterError(f"unparseable frontmatter line: {bad_line!r}")
-    if "name" not in fields:
+    if not fields.get("name"):
         raise SkillFrontmatterError("frontmatter missing required key: name")
-    if "description" not in fields:
+    if not fields.get("description"):
         raise SkillFrontmatterError("frontmatter missing required key: description")
     return SkillFrontmatter(name=fields["name"], description=fields["description"])
