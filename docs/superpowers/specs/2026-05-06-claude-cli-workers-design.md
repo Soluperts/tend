@@ -1,5 +1,12 @@
 # Claude-CLI Workers — Design
 
+> **Superseded for the worker shape by
+> [`2026-05-07-deskclaw-skills-and-general-worker-design.md`](./2026-05-07-deskclaw-skills-and-general-worker-design.md).**
+> The claude-CLI invocation mechanics described below still apply
+> (subscription billing, env scrubbing, stream-json parsing, session
+> persistence, resume semantics). The worker class name and the
+> `code_in`-vs-`do_task` flow do not.
+
 How DeskClaw's "I'll handle that for you" actions actually run.
 
 ---
