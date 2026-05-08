@@ -354,6 +354,22 @@ def cmd_skills_quarantined(args) -> int:
     return 0
 
 
+def cmd_scan_skill(args) -> int:
+    from tend.skills import scan_text
+    name = _validate_skill_name(args.name)
+    p = _skills_root() / name / "SKILL.md"
+    if not p.is_file():
+        print(f"no skill named {name!r}", file=sys.stderr)
+        return 3
+    report = scan_text(p.read_text(encoding="utf-8"))
+    if report.is_clean:
+        print(f"{name}: clean")
+        return 0
+    for f in report.findings:
+        print(f"  [{f.severity}] {f.rule} (line {f.line}): {f.snippet}")
+    return 2 if report.is_critical else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="tend")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -380,6 +396,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     psnap = sub.add_parser("snapshot", help="Snapshot the local Claude Code environment.")
     psnap.set_defaults(func=cmd_snapshot)
+
+    scan = sub.add_parser("scan-skill", help="Run the safety scanner over a skill.")
+    scan.add_argument("name")
+    scan.set_defaults(func=cmd_scan_skill)
 
     skills = sub.add_parser("skills").add_subparsers(dest="action", required=True)
 
