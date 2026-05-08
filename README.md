@@ -67,6 +67,17 @@ $EDITOR soul.md    # optionally tune the assistant's persona
 | `TEND_SKILLS_ROOT` | env var | Override the directory the CLI and `list_skills` tool read from. Defaults to `~/.tend/skills`. The GeneralWorker uses `[workers.general].skills_dir` instead. |
 | `TEND_SKILLS_QUARANTINE_ROOT` | env var | Override the directory `tend skills quarantined` reads from. Defaults to `~/.tend/skills-quarantined`. |
 
+The GeneralWorker is configured under `[workers.general]` in `tend.toml`:
+
+```toml
+[workers.general]
+model = "claude-opus-4-7"
+setting_sources = "user,project,local"
+allowed_tools = ["Read", "Edit", "Write", "Bash", "Grep", "Glob"]
+workspace_dir = "~/.tend/workspace"   # persistent build dir, shared across tasks
+skills_dir = "~/.tend/skills"         # markdown procedures the worker can run/author
+```
+
 If a configured cloud service preflight fails (bad key, no credit, network), tend logs the reason and falls back to its local equivalent.
 
 ## Run (development)
@@ -92,14 +103,28 @@ Logs: `journalctl --user -u tend`. The service auto-restarts on failure; after 5
 
 Speak the wake phrase ("hey jarvis" by default) — tend acknowledges with "Yes?". Have a casual conversation. Say "remind me in five minutes about water" to dispatch a reminder. Say the sleep phrase ("goodbye jarvis") or stay silent for 30 seconds to send the brain back to sleep. The reminder still fires whether you're awake or asleep — when it does, the speaker announces it and the brain's context records it so you can ask follow-up questions on next wake.
 
+Ask for something the assistant can't answer directly ("plan my meals for the week", "summarize last week's watch data") and the brain dispatches it via `do_task` to the GeneralWorker, which runs `claude` in the background workspace and announces a result when done.
+
 Say "start fresh" while awake to flush the day-session context (e.g. when topics have shifted dramatically).
+
+### Skills
+
+The worker's behavior comes from markdown procedures under
+`~/.tend/skills/<name>/SKILL.md`. List them with `tend skills list`,
+inspect with `tend skills show <name>`. New skills are authored mid-task
+by the worker when an incoming request doesn't match an existing one;
+`tend scan-skill <name>` runs the safety scanner before/after.
 
 ## Layout
 
 ```
 src/tend/
   audio/        Hub (audio agent), gates, latency loggers
-  workers/      Worker agents (v1: ReminderWorker)
+  workers/      Worker agents
+    general.py        GeneralWorker (skill-driven; replaces former CodingWorker)
+    reminder.py       ReminderWorker (timer/reminder stub)
+    claude_cli.py     ClaudeCliWorker (base — runs `claude` CLI subprocess)
+  skills.py     Skill catalog + safety scanner (~/.tend/skills/)
   brain.py      Brain (LLMContextAgent + tools)
   session.py    SessionManager (soul.md + daily reset)
   services.py   STT / TTS / brain LLM factories with preflight
