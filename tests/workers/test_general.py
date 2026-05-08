@@ -1,4 +1,4 @@
-"""CodingWorker — runs claude inside the persistent deskclaw workspace.
+"""GeneralWorker — runs claude inside the persistent deskclaw workspace.
 
 It ensures the workspace dir exists, spawns claude with cwd=workspace,
 publishes a TTSSpeakFrame and a task_update, and returns. There is no
@@ -78,7 +78,7 @@ def _request(request: str) -> BusTaskRequestMessage:
 async def test_coding_worker_runs_claude_in_workspace(
     store, mock_bus, workspace
 ):
-    from tend.workers.coding import CodingWorker
+    from tend.workers.general import GeneralWorker
 
     proc = _FakeProc(_result("Edited two files."))
     async def factory(*args, **kwargs):
@@ -91,7 +91,7 @@ async def test_coding_worker_runs_claude_in_workspace(
         setting_sources="user,project,local",
         allowed_tools=["Read", "Edit", "Write", "Bash"],
     )
-    worker = CodingWorker(
+    worker = GeneralWorker(
         "coding", bus=mock_bus, store=store, config=cfg,
         subprocess_factory=factory, workspace_dir=workspace,
     )
@@ -134,7 +134,7 @@ async def test_coding_worker_resume_passes_resume_flag(
     store, mock_bus, workspace
 ):
     """Resume must pass --resume to claude and still cwd into the workspace."""
-    from tend.workers.coding import CodingWorker
+    from tend.workers.general import GeneralWorker
 
     # Seed a prior session so resume has something to refer to.
     store.start(
@@ -150,7 +150,7 @@ async def test_coding_worker_resume_passes_resume_flag(
         return proc
 
     cfg = WorkerConfig(allowed_tools=["Read", "Edit"])
-    worker = CodingWorker(
+    worker = GeneralWorker(
         "coding", bus=mock_bus, store=store, config=cfg,
         subprocess_factory=factory, workspace_dir=workspace,
     )
@@ -174,7 +174,7 @@ async def test_coding_worker_announces_error_when_run_claude_fails(
     store, mock_bus, workspace
 ):
     """run_claude failure must trigger _announce_error, not _announce."""
-    from tend.workers.coding import CodingWorker
+    from tend.workers.general import GeneralWorker
 
     # Subprocess exits with non-zero → run_claude raises RuntimeError.
     proc = _FakeProc([], returncode=1)
@@ -182,7 +182,7 @@ async def test_coding_worker_announces_error_when_run_claude_fails(
         return proc
 
     cfg = WorkerConfig(allowed_tools=["Read"])
-    worker = CodingWorker(
+    worker = GeneralWorker(
         "coding", bus=mock_bus, store=store, config=cfg,
         subprocess_factory=factory, workspace_dir=workspace,
     )
@@ -214,10 +214,10 @@ async def test_coding_worker_announces_error_when_run_claude_fails(
 
 async def test_coding_worker_default_workspace_resolves_under_home():
     """If no workspace_dir is configured, default to ~/.tend/workspace/."""
-    from tend.workers.coding import CodingWorker, DEFAULT_WORKSPACE
+    from tend.workers.general import GeneralWorker, DEFAULT_WORKSPACE
 
     cfg = WorkerConfig()
-    worker = CodingWorker(
+    worker = GeneralWorker(
         "coding", bus=MagicMock(), store=MagicMock(), config=cfg,
     )
     assert worker._workspace_dir == DEFAULT_WORKSPACE
@@ -225,10 +225,10 @@ async def test_coding_worker_default_workspace_resolves_under_home():
 
 async def test_coding_worker_workspace_dir_from_config(tmp_path):
     """An explicit `workspace_dir` in WorkerConfig wins over the default."""
-    from tend.workers.coding import CodingWorker
+    from tend.workers.general import GeneralWorker
 
     cfg = WorkerConfig(workspace_dir=str(tmp_path / "custom"))
-    worker = CodingWorker(
+    worker = GeneralWorker(
         "coding", bus=MagicMock(), store=MagicMock(), config=cfg,
     )
     assert worker._workspace_dir == tmp_path / "custom"
