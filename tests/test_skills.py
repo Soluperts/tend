@@ -134,3 +134,11 @@ def test_format_catalog_xml_escapes_special_chars():
     out = format_catalog_xml(skills)
     assert "A &amp; B &lt;c&gt; &quot;d&quot;" in out
     assert "<description>A & B" not in out  # raw ampersand must not appear
+
+
+def test_format_catalog_xml_no_trailing_newline_and_well_wrapped():
+    skills = [SkillInfo(name="x", description="y", path=Path("/p/SKILL.md"))]
+    out = format_catalog_xml(skills)
+    assert out.startswith("<available-skills>\n")
+    assert out.endswith("</available-skills>")
+    assert not out.endswith("\n")  # no trailing newline; caller controls joins

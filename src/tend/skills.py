@@ -30,6 +30,14 @@ class SkillFrontmatter:
 _FENCE = "---"
 
 
+_QUOT_MAP = {'"': "&quot;"}
+
+
+def _esc(s: str) -> str:
+    """XML-escape including double quotes."""
+    return _xml_escape(s, _QUOT_MAP)
+
+
 def parse_frontmatter(text: str) -> SkillFrontmatter:
     """Parse the YAML-ish frontmatter at the start of a SKILL.md.
 
@@ -116,20 +124,18 @@ def format_catalog_xml(skills: list[SkillInfo]) -> str:
     """Render the <available-skills> XML block for the worker prompt.
 
     Returns "" for an empty list so the caller can omit the section
-    entirely without a special case.
+    entirely without a special case. The output has no leading or
+    trailing newline — the caller controls separators when concatenating
+    with other prompt text.
     """
     if not skills:
         return ""
     lines = ["<available-skills>"]
     for s in skills:
         lines.append("  <skill>")
-        lines.append(f"    <name>{_xml_escape(s.name, {'\"': '&quot;'})}</name>")
-        lines.append(
-            f"    <description>{_xml_escape(s.description, {'\"': '&quot;'})}</description>"
-        )
-        lines.append(
-            f"    <path>{_xml_escape(str(s.path), {'\"': '&quot;'})}</path>"
-        )
+        lines.append(f"    <name>{_esc(s.name)}</name>")
+        lines.append(f"    <description>{_esc(s.description)}</description>")
+        lines.append(f"    <path>{_esc(str(s.path))}</path>")
         lines.append("  </skill>")
     lines.append("</available-skills>")
     return "\n".join(lines)
