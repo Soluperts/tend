@@ -254,7 +254,7 @@ def cmd_snapshot(args) -> None:
         "```\n\n"
         "For a coding worker with full tool access:\n\n"
         "```toml\n"
-        "[workers.coding]\n"
+        "[workers.general]\n"
         'model = "claude-opus-4-7"\n'
         'setting_sources = "user,project,local"\n'
         'allowed_tools = ["Read", "Edit", "Write", "Bash", "Grep", "Glob", "mcp__*"]\n'

@@ -105,23 +105,23 @@ class Brain(LLMAgent):
         except Exception as e:
             logger.debug(f"reminder worker may already exist: {e!r}")
 
-    async def _ensure_coding_worker(self) -> None:
+    async def _ensure_general_worker(self) -> None:
         from tend.config import WorkerConfig, settings
-        from tend.workers.coding import CodingWorker
+        from tend.workers.general import GeneralWorker
 
         for child in getattr(self, "_children", []) or []:
-            if getattr(child, "name", None) == "coding":
+            if getattr(child, "name", None) == "general":
                 return
         cfg = settings.workers.get("general") or WorkerConfig()
         if self._store is None:
-            logger.warning("Brain has no SessionStore; coding worker cannot be added.")
+            logger.warning("Brain has no SessionStore; general worker cannot be added.")
             return
         try:
             await self.add_agent(
-                CodingWorker("coding", bus=self.bus, store=self._store, config=cfg),
+                GeneralWorker("general", bus=self.bus, store=self._store, config=cfg),
             )
         except Exception as e:
-            logger.debug(f"coding worker may already exist: {e!r}")
+            logger.debug(f"general worker may already exist: {e!r}")
 
     @tool
     async def remind_in(self, params: FunctionCallParams, seconds: int, what: str):
@@ -146,23 +146,43 @@ class Brain(LLMAgent):
         return "Starting fresh."
 
     @tool
-    async def code_in(self, params: FunctionCallParams, request: str):
-        """Dispatch a build/coding task to the deskclaw coding worker.
-
-        Use this when you need a small tool, script, parser, or glue
-        component built so you can complete another workflow. Code is
-        written into the deskclaw workspace, not into arbitrary user repos.
+    async def do_task(self, params: FunctionCallParams, request: str):
+        """Hand a task off to the deskclaw worker. Use for anything that needs
+        work beyond conversation: meal plans, fitness check-ins, calendar work,
+        building tools, running scripts.
 
         Args:
-            request (str): What you want built, in plain English.
+            request (str): What you want done, in plain English.
         """
         if self._store is None:
-            # Without a store, _ensure_coding_worker no-ops and request_task
-            # would fire at a worker that doesn't exist. Fail loud and clear.
-            return "Session store unavailable — cannot dispatch coding tasks."
-        await self._ensure_coding_worker()
-        await self.request_task("coding", payload={"request": request})
-        return f"Got it. I'll work on '{request[:80]}' and let you know when it's ready."
+            await params.result_callback(
+                "Session store unavailable — cannot dispatch tasks."
+            )
+            return
+        await self._ensure_general_worker()
+        await self.request_task("general", payload={"request": request})
+        await params.result_callback(
+            f"Got it. Working on '{request[:80]}'..."
+        )
+
+    @tool
+    async def list_skills(self, params: FunctionCallParams):
+        """List the workflows tend currently knows how to do."""
+        import os as _os
+        from pathlib import Path as _Path
+
+        from tend.skills import enumerate_skills
+
+        root = _Path(_os.environ.get("TEND_SKILLS_ROOT")
+                     or _Path.home() / ".tend" / "skills")
+        skills = enumerate_skills(root)
+        if not skills:
+            await params.result_callback(
+                "I haven't built any workflows yet."
+            )
+            return
+        lines = [f"{s.name} — {s.description}" for s in skills]
+        await params.result_callback("\n".join(lines))
 
     @tool
     async def list_recent_jobs(self, params: FunctionCallParams, limit: int = 5):
@@ -220,14 +240,14 @@ class Brain(LLMAgent):
         match = next((r for r in rows if r.session_id.startswith(session_id)), None)
         if not match:
             return f"Couldn't find session '{session_id}'."
-        # v1: only the coding worker can be resumed. When more workers learn
+        # v1: only the general worker can be resumed. When more workers learn
         # to resume, replace this with a registry lookup keyed on match.worker.
-        if match.worker != "coding":
+        if match.worker != "general":
             return (
                 f"Session {match.session_id[:8]} belongs to worker "
                 f"'{match.worker}', which doesn't support resuming yet."
             )
-        await self._ensure_coding_worker()
+        await self._ensure_general_worker()
         await self.request_task(
             match.worker,
             payload={
