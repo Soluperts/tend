@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -121,8 +122,25 @@ def _build_args(
 
 
 def _scrubbed_env(env_in: dict[str, str]) -> dict[str, str]:
-    """Return a copy of env_in with the dangerous keys removed."""
-    return {k: v for k, v in env_in.items() if k not in CLAUDE_CLI_CLEAR_ENV}
+    """Return a copy of env_in with the dangerous keys removed.
+
+    Also ensure the current interpreter's bin directory is on PATH so
+    venv entry points (like `tend`) resolve in claude's Bash subshell.
+    Under systemd, ExecStart invokes `<venv>/bin/python` directly without
+    activating the venv, so `<venv>/bin` is not on PATH by default — and
+    `tend scan-skill` (which `_GENERAL_PREAMBLE` instructs claude to call)
+    would fail with "command not found". We use `Path(sys.executable).parent`
+    rather than `.resolve().parent` because the venv's `python` is typically
+    a symlink to the system interpreter; resolving it would point us at
+    `/usr/bin` and miss the venv shims entirely.
+    """
+    out = {k: v for k, v in env_in.items() if k not in CLAUDE_CLI_CLEAR_ENV}
+    py_bin = str(Path(sys.executable).parent)
+    existing_path = out.get("PATH", "")
+    path_parts = existing_path.split(os.pathsep) if existing_path else []
+    if py_bin and py_bin not in path_parts:
+        out["PATH"] = py_bin + (os.pathsep + existing_path if existing_path else "")
+    return out
 
 
 async def _consume_stream(

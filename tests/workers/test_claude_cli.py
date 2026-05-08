@@ -87,11 +87,43 @@ def test_scrubbed_env_removes_dangerous_keys():
         "OTEL_EXPORTER_OTLP_ENDPOINT": "http://nope",
     }
     out = _scrubbed_env(env_in)
-    assert "PATH" in out and out["PATH"] == "/usr/bin"
+    # PATH is preserved (and the venv bin is prepended — see dedicated tests
+    # below); we just check the original entry is still there.
+    assert "PATH" in out and "/usr/bin" in out["PATH"].split(":")
     assert "HOME" in out
     for key in ("ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", "OTEL_EXPORTER_OTLP_ENDPOINT"):
         assert key not in out
         assert key in CLAUDE_CLI_CLEAR_ENV
+
+
+def test_scrubbed_env_prepends_venv_bin_to_path(monkeypatch):
+    """venv's bin dir is on PATH so `tend scan-skill` resolves in claude's Bash."""
+    import sys
+    from pathlib import Path
+    py_bin = str(Path(sys.executable).parent)
+    env_in = {"PATH": "/usr/bin:/bin"}
+    out = _scrubbed_env(env_in)
+    parts = out["PATH"].split(":")
+    assert parts[0] == py_bin
+    assert "/usr/bin" in parts and "/bin" in parts
+
+
+def test_scrubbed_env_does_not_duplicate_venv_bin(monkeypatch):
+    import sys
+    from pathlib import Path
+    py_bin = str(Path(sys.executable).parent)
+    env_in = {"PATH": f"{py_bin}:/usr/bin"}
+    out = _scrubbed_env(env_in)
+    parts = out["PATH"].split(":")
+    assert parts.count(py_bin) == 1
+
+
+def test_scrubbed_env_no_path_in_input_still_sets_one(monkeypatch):
+    import sys
+    from pathlib import Path
+    py_bin = str(Path(sys.executable).parent)
+    out = _scrubbed_env({})
+    assert out["PATH"] == py_bin
 
 
 def test_clear_env_includes_critical_keys():
