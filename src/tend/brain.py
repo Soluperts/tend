@@ -112,7 +112,7 @@ class Brain(LLMAgent):
         for child in getattr(self, "_children", []) or []:
             if getattr(child, "name", None) == "coding":
                 return
-        cfg = settings.workers.get("coding") or WorkerConfig()
+        cfg = settings.workers.get("general") or WorkerConfig()
         if self._store is None:
             logger.warning("Brain has no SessionStore; coding worker cannot be added.")
             return
