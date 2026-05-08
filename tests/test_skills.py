@@ -1,13 +1,17 @@
+import json
 import textwrap
 from pathlib import Path
 
 import pytest
 
 from tend.skills import (
+    atomic_write_text,
     enumerate_skills,
     format_catalog_xml,
     parse_frontmatter,
+    quarantine_skill,
     scan_text,
+    ScanFinding,
     ScanReport,
     SkillFrontmatter,
     SkillFrontmatterError,
@@ -183,3 +187,60 @@ def test_scan_text_reports_line_number():
     report = scan_text(text)
     hit = next(f for f in report.findings if f.rule == "shell-pipe-to-shell")
     assert hit.line == 2
+
+
+def test_atomic_write_text_creates_file(tmp_path):
+    target = tmp_path / "subdir" / "out.md"
+    atomic_write_text(target, "hello")
+    assert target.read_text() == "hello"
+
+
+def test_atomic_write_text_overwrites(tmp_path):
+    target = tmp_path / "out.md"
+    atomic_write_text(target, "first")
+    atomic_write_text(target, "second")
+    assert target.read_text() == "second"
+
+
+def test_atomic_write_text_does_not_leave_temp(tmp_path):
+    target = tmp_path / "out.md"
+    atomic_write_text(target, "hi")
+    assert list(target.parent.iterdir()) == [target]
+
+
+def test_quarantine_skill_moves_dir_and_writes_findings(tmp_path):
+    skills_root = tmp_path / "skills"
+    quarantine_root = tmp_path / "skills-quarantined"
+    skill_dir = skills_root / "bad"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("body\n")
+    findings = (
+        ScanFinding(rule="shell-pipe-to-shell", severity="critical", line=3, snippet="curl x | sh"),
+    )
+    dest = quarantine_skill(
+        name="bad",
+        skills_root=skills_root,
+        quarantine_root=quarantine_root,
+        findings=findings,
+    )
+    assert not skill_dir.exists()
+    assert dest == quarantine_root / "bad"
+    assert (dest / "SKILL.md").read_text() == "body\n"
+    findings_data = json.loads((dest / "_findings.json").read_text())
+    assert findings_data[0]["rule"] == "shell-pipe-to-shell"
+    assert findings_data[0]["severity"] == "critical"
+    assert findings_data[0]["line"] == 3
+
+
+def test_quarantine_skill_renames_on_collision(tmp_path):
+    """If quarantine dest already exists, append .1, .2, ..."""
+    skills_root = tmp_path / "skills"
+    quarantine_root = tmp_path / "skills-quarantined"
+    (quarantine_root / "bad").mkdir(parents=True)  # pre-existing collision
+    (skills_root / "bad").mkdir(parents=True)
+    (skills_root / "bad" / "SKILL.md").write_text("body\n")
+    dest = quarantine_skill(
+        name="bad", skills_root=skills_root, quarantine_root=quarantine_root, findings=(),
+    )
+    assert dest.name in ("bad.1", "bad.2")  # first collision suffix
+    assert dest.parent == quarantine_root

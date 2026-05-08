@@ -10,7 +10,12 @@ See docs/superpowers/specs/2026-05-07-deskclaw-skills-and-general-worker-design.
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import shutil
+import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -233,3 +238,47 @@ def scan_text(text: str) -> ScanReport:
                     snippet=line.strip()[:200],
                 ))
     return ScanReport(findings=tuple(findings))
+
+
+def atomic_write_text(path: Path, content: str) -> None:
+    """Write content to path atomically. Parent dirs are created if missing."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def quarantine_skill(
+    *,
+    name: str,
+    skills_root: Path,
+    quarantine_root: Path,
+    findings: Iterable[ScanFinding],
+) -> Path:
+    """Move skills_root/<name>/ to quarantine_root/<name>/ + write findings sidecar.
+
+    Returns the final destination path. If quarantine_root/<name>/ already
+    exists, appends .1, .2, ... until a free name is found.
+    """
+    src = skills_root / name
+    quarantine_root.mkdir(parents=True, exist_ok=True)
+    dest = quarantine_root / name
+    suffix = 1
+    while dest.exists():
+        dest = quarantine_root / f"{name}.{suffix}"
+        suffix += 1
+    shutil.move(str(src), str(dest))
+    findings_data = [
+        {"rule": f.rule, "severity": f.severity, "line": f.line, "snippet": f.snippet}
+        for f in findings
+    ]
+    (dest / "_findings.json").write_text(json.dumps(findings_data, indent=2))
+    return dest
