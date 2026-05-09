@@ -68,3 +68,31 @@ def test_secrets_loaded_from_env(monkeypatch, tmp_path):
     assert s.anthropic_api_key == "sk-test-anthropic"
     assert s.deepgram_api_key == "dg-test"
     assert s.elevenlabs_api_key == "el-test"
+
+
+def test_scheduler_config_defaults_present(monkeypatch, tmp_path):
+    from tend.config import Settings
+    s = Settings()
+    assert s.scheduler.heartbeat_every == "30m"
+    assert s.scheduler.missed_at_policy == "run-on-restart"
+
+
+def test_webhook_config_defaults_present():
+    from tend.config import Settings
+    s = Settings()
+    assert s.webhook.host == "127.0.0.1"
+    assert s.webhook.port == 7331
+
+
+def test_announcer_config_defaults_present():
+    from tend.config import Settings
+    s = Settings()
+    assert s.announcer.default_cooldown_s == 300
+    assert isinstance(s.announcer.category, dict)
+
+
+def test_webhook_token_from_env(monkeypatch):
+    from tend.config import Settings
+    monkeypatch.setenv("TEND_WEBHOOK_TOKEN", "shh")
+    s = Settings()
+    assert s.tend_webhook_token == "shh"

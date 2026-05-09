@@ -39,6 +39,27 @@ class WorkerConfig(BaseModel):
     skills_dir: str | None = None
 
 
+class SchedulerConfig(BaseModel):
+    """Scheduler configuration for proactive triggers."""
+
+    heartbeat_every: str = "30m"  # or "off"
+    missed_at_policy: str = "run-on-restart"  # or "skip"
+
+
+class WebhookConfig(BaseModel):
+    """Webhook server configuration for receiving proactive events."""
+
+    host: str = "127.0.0.1"
+    port: int = 7331
+
+
+class AnnouncerConfig(BaseModel):
+    """Announcer configuration for proactive notifications."""
+
+    default_cooldown_s: int = 300
+    category: dict[str, int] = {}
+
+
 class Settings(BaseSettings):
     """All tend settings. Field names are lowercase; env vars are TEND_<UPPERCASE>."""
 
@@ -82,6 +103,11 @@ class Settings(BaseSettings):
     # Per-worker config blocks. Keys are worker names; values are WorkerConfig.
     workers: dict[str, WorkerConfig] = {}
 
+    # Proactive triggers
+    scheduler: SchedulerConfig = SchedulerConfig()
+    webhook: WebhookConfig = WebhookConfig()
+    announcer: AnnouncerConfig = AnnouncerConfig()
+
     # Secrets (vendor conventions, no TEND_ prefix)
     # AliasChoices lets tests pass deepgram_api_key=... directly in Settings(...) while
     # env-var loading still reads the canonical vendor names (ANTHROPIC_API_KEY, etc.)
@@ -96,6 +122,10 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices("ELEVENLABS_API_KEY", "elevenlabs_api_key"),
+    )
+    tend_webhook_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("TEND_WEBHOOK_TOKEN", "tend_webhook_token"),
     )
 
     @classmethod
