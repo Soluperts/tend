@@ -82,6 +82,23 @@ def _seed_heartbeat_skill() -> None:
     target.write_text(HEARTBEAT_SKILL_BODY, encoding="utf-8")
 
 
+SCHEDULE_WATCHER_SKILL_DIR = (
+    Path(__file__).resolve().parents[2] / "skills" / "schedule-watcher"
+)
+
+
+def _seed_skill_from_repo(skill_dir: Path) -> None:
+    """Copy a repo-shipped skill into ~/.tend/skills/<name>/ if not
+    already present. Idempotent: never overwrites a skill the user has
+    edited."""
+    target = Path.home() / ".tend" / "skills" / skill_dir.name
+    if target.exists():
+        return
+    import shutil
+    shutil.copytree(skill_dir, target)
+    logger.info(f"seeded skill {skill_dir.name}")
+
+
 def _seed_heartbeat_job(scheduler: Scheduler, every: str) -> None:
     if (every or "").lower() == "off":
         # Remove existing heartbeat job if disabled.
@@ -186,6 +203,7 @@ async def _run() -> None:
 
     # Seed heartbeat skill on first boot if missing.
     _seed_heartbeat_skill()
+    _seed_skill_from_repo(SCHEDULE_WATCHER_SKILL_DIR)
 
     # Webhook server — start before runner.run() so it is ready immediately.
     webhook_app = build_app(
