@@ -60,6 +60,20 @@ class AnnouncerConfig(BaseModel):
     category: dict[str, int] = {}
 
 
+class GoogleEventConfig(BaseModel):
+    """Per-tag config in `[google.events.<tag>]` blocks."""
+
+    upcoming_lead: str = "0m"
+    emit: list[str] = ["starting"]
+
+
+class GoogleConfig(BaseModel):
+    """Google integration config from `[google]` block."""
+
+    watched_calendars: list[str] = []
+    events: dict[str, GoogleEventConfig] = {}
+
+
 class Settings(BaseSettings):
     """All tend settings. Field names are lowercase; env vars are TEND_<UPPERCASE>."""
 
@@ -107,6 +121,7 @@ class Settings(BaseSettings):
     scheduler: SchedulerConfig = SchedulerConfig()
     webhook: WebhookConfig = WebhookConfig()
     announcer: AnnouncerConfig = AnnouncerConfig()
+    google: GoogleConfig = GoogleConfig()
 
     # Secrets (vendor conventions, no TEND_ prefix)
     # AliasChoices lets tests pass deepgram_api_key=... directly in Settings(...) while

@@ -97,3 +97,43 @@ def test_webhook_token_from_env(monkeypatch):
     monkeypatch.setenv("TEND_WEBHOOK_TOKEN", "shh")
     s = Settings()
     assert s.tend_webhook_token == "shh"
+
+
+def test_google_config_defaults_present():
+    from tend.config import GoogleConfig
+    c = GoogleConfig()
+    assert c.watched_calendars == []
+    assert c.events == {}
+
+
+def test_google_event_config_defaults():
+    from tend.config import GoogleEventConfig
+    e = GoogleEventConfig()
+    assert e.upcoming_lead == "0m"
+    assert e.emit == ["starting"]
+
+
+def test_google_config_loads_from_toml(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "tend.toml").write_text("""
+[google]
+watched_calendars = ["tend", "primary"]
+
+[google.events.lunch]
+upcoming_lead = "60m"
+emit = ["upcoming", "starting"]
+
+[google.events.deep-work]
+upcoming_lead = "5m"
+emit = ["upcoming", "starting", "ended"]
+""")
+    for k in list(os.environ):
+        if k.startswith("TEND_"):
+            monkeypatch.delenv(k)
+
+    from tend.config import Settings
+    s = Settings()
+    assert s.google.watched_calendars == ["tend", "primary"]
+    assert s.google.events["lunch"].upcoming_lead == "60m"
+    assert s.google.events["lunch"].emit == ["upcoming", "starting"]
+    assert s.google.events["deep-work"].emit == ["upcoming", "starting", "ended"]
