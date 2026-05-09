@@ -49,6 +49,14 @@ them.
 - Brain context awareness: every announcement, regardless of source,
   appears in Hub's `LLMContext` so a later conversation turn can
   reference it.
+- A stable, documented integration contract for external producers
+  (vision daemon today, future webhook callers) so a third party can
+  wire up `/say` and `/event` from a single page of docs without
+  reading tend's source.
+- Retire the v1 `ReminderWorker` stub: the new scheduler does
+  everything it does (and more, with cooldown / context logging).
+  `Brain.remind_in` becomes a thin wrapper over `Brain.schedule(...)`
+  so existing voice phrasing keeps working.
 
 ## Non-goals (v1)
 
@@ -85,9 +93,9 @@ them.
 │         tools (new): schedule, list_schedules, cancel_schedule,          │
 │                       enable_skill_triggers, disable_skill_triggers      │
 │         tools (existing): do_task, list_skills, remind_in, …             │
+│         (remind_in now wraps schedule(); ReminderWorker is removed)      │
 │         └── Workers                                                      │
 │               GeneralWorker (skill-driven; learns silent-default mode)   │
-│               ReminderWorker (unchanged)                                 │
 │                                                                          │
 │  Scheduler (new BaseAgent, peer to Brain)                                │
 │      reads ~/.tend/cron/jobs.json on init                                │
@@ -435,6 +443,61 @@ The vision process owns wording for `/say` and category choice. tend
 trusts the payload — it does not sanitize, rate-limit beyond cooldown,
 or content-filter.
 
+## Integration document
+
+A v1 deliverable is a standalone integration document at
+`docs/integrating-with-tend.md` (top-level, not under
+`docs/superpowers/`). Audience: anyone writing a separate process that
+wants to use `/say` or `/event`. The document is the contract — code
+authors should be able to wire up an integration from this page alone
+without reading tend's source.
+
+Required sections:
+
+- **What this is.** One paragraph on tend's webhook surface and what
+  it is for. Not a tutorial on tend itself; pointer to the README for
+  background.
+- **Setup.** Where to find the host/port (`tend.toml [webhook]`) and
+  the token (`TEND_WEBHOOK_TOKEN` in `.env`). How to confirm tend's
+  webhook server is up (`tend webhook test`).
+- **Authentication.** Header format (`Authorization: Bearer <token>`).
+  Note that tokens rotate manually and that `.env` is the source of
+  truth.
+- **`POST /say` reference.** Full request schema with field types,
+  required vs optional, examples for each field. Full response
+  schema. Status codes and what each means. Concrete `requests` and
+  `curl` examples.
+- **`POST /event` reference.** Same shape as `/say`. Explain that
+  delivery is *fire-and-forget*: the response tells you which skills
+  matched (`{"dispatched": [...]}`) but does not wait for them to
+  finish. Document the "no skills matched" case (`{"dispatched":
+  []}`) — that is not an error.
+- **Cooldown semantics from the caller's perspective.** Explain what
+  `delivered: false` means in `/say` responses, why it can happen,
+  and that callers are not expected to retry on cooldown drops.
+- **Best practices.** Pick a stable, meaningful `category`; do not
+  reuse `"general"` for distinct nag types; keep `text` short
+  (one-sentence-ish) since it goes straight to TTS; reserve
+  `urgent: true` for safety-class events; retry on
+  `ConnectionRefusedError` so the producer survives a tend restart.
+- **Limitations.** Loopback-only; no streaming; no delivery
+  acknowledgement beyond the synchronous response; no inbound channel
+  for tend → producer messages in v1.
+- **Versioning.** The contract follows the project's normal
+  release cadence; breaking changes will be called out in CHANGELOG
+  or release notes. Producers should pin to a known-good tend
+  version if they need stability guarantees.
+- **Worked example: a posture-nag daemon.** ~30 lines of Python that
+  imports `requests`, polls a fake posture sensor, calls `/say` on
+  bad posture, calls `/event` on long sitting periods. Self-contained,
+  copy-pasteable.
+
+The implementation phase writes this document with the *actual* field
+names, error codes, and behaviours observed in code — the spec lists
+the topics, not the final wording. The integration doc is part of
+v1's "done" definition; the feature is not shipped until this
+document exists and matches the implementation.
+
 ## Heartbeat skill
 
 Seeded on first boot at `~/.tend/skills/heartbeat/SKILL.md`:
@@ -480,9 +543,15 @@ spawn a `claude` subprocess (that only happens per-task). The
 `_ensure_general_worker` helper on Brain becomes a no-op — kept for
 one release as a forwards-compatible shim, then removed.
 
-ReminderWorker stays lazily registered for now since `remind_in` only
-fires from the user-facing tool path and there is no proactive
-caller.
+**ReminderWorker is removed.** Its sole behaviour — sleep N seconds,
+publish `TTSSpeakFrame`, log to context — is a strict subset of what
+the new scheduler + announcer already do, and the announcer adds
+cooldown and active-Brain deferral on top. `Brain.remind_in(seconds,
+what)` becomes a thin wrapper that calls
+`schedule(when=f"in {seconds}s", request=what, name="reminder")`.
+External callers see no behavioural regression: the voice phrasing
+"remind me in 20 minutes" still works and now benefits from the
+shared announcement pipeline.
 
 ## GeneralWorker payload changes
 
@@ -562,7 +631,9 @@ scheduled fire — there is no concept of catching up.
 | `src/tend/webhook.py` | **New** — aiohttp receiver + event router. |
 | `src/tend/cron_store.py` | **New** — atomic JSON I/O for jobs.json + jobs-state.json. |
 | `src/tend/skills.py` | Extend frontmatter parser to accept `triggers:`, `events:`, `silent_default:`; add `find_event_subscribers(kind)`. |
-| `src/tend/brain.py` | Add `schedule`, `list_schedules`, `cancel_schedule`, `enable_skill_triggers`, `disable_skill_triggers` tools; hold a Scheduler reference. |
+| `src/tend/brain.py` | Add `schedule`, `list_schedules`, `cancel_schedule`, `enable_skill_triggers`, `disable_skill_triggers` tools; hold a Scheduler reference. Rewrite `remind_in` as a thin wrapper over `schedule(...)`. Drop `_ensure_reminder_worker`. |
+| `src/tend/workers/reminder.py` | **Deleted** — superseded by scheduler + announcer. |
+| `tests/workers/test_reminder.py` | **Deleted** — coverage moves to scheduler + announcer tests. |
 | `src/tend/workers/general.py` | Accept `silent_default` + `event` + `skill` payload fields; replace direct `TTSSpeakFrame` publishes with announcer calls; preamble tweaks. Registered eagerly at boot. |
 | `src/tend/audio/hub.py` | Hold a ProactiveAnnouncer reference, pass it to scheduler/webhook constructors; on `Brain.deactivated` notify the announcer to drain pending queue. |
 | `src/tend/cli.py` | `tend schedule list/show/add/rm`, `tend skills enable-triggers/disable-triggers`, `tend webhook test`. |
@@ -575,11 +646,18 @@ scheduled fire — there is no concept of catching up.
 | `tests/test_webhook.py` | **New** — auth, /say, /event routing, malformed payloads. |
 | `tests/test_cron_store.py` | **New** — atomic writes, schema version, concurrent edits. |
 | `tests/workers/test_general.py` | Add silent-default heartbeat coverage. |
-| `CLAUDE.md` | Add "Proactive triggers" section: scheduler + webhook + announcer; document the privacy posture. |
+| `docs/integrating-with-tend.md` | **New** — outward-facing integration contract for `/say` and `/event`; see "Integration document" section above for required contents. |
+| `CLAUDE.md` | Add "Proactive triggers" section: scheduler + webhook + announcer; document the privacy posture. Remove ReminderWorker mention. Reference the integration doc. |
 
 What stays exactly as-is: Hub's audio pipeline, the wake gate, the
 sleep-phrase gate, day-session reset, the in-process bus, GeneralWorker's
-skill-catalog injection, the safety scanner, ReminderWorker.
+skill-catalog injection, the safety scanner.
+
+What is removed: `src/tend/workers/reminder.py`,
+`tests/workers/test_reminder.py`, the `_ensure_reminder_worker`
+helper on Brain, and the `[workers.reminder]` section of `tend.toml`
+(if present). `Brain.remind_in` is rewritten as a wrapper around
+`schedule(...)` so the user-facing voice surface is unchanged.
 
 ## Open questions / risks
 
