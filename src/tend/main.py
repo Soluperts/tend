@@ -89,6 +89,8 @@ REPO_SKILL_NAMES = (
     "briefing",
     "meeting-prep",
     "mail-triage",
+    "routine-setup",
+    "schedule-block",
 )
 
 
