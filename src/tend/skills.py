@@ -5,7 +5,8 @@ worker a compact catalog at spawn time, and gates new on-disk files
 (SKILL.md bodies and ~/.tend/workspace/bin/ scripts) through a regex
 safety scanner before they get executed.
 
-See docs/superpowers/specs/2026-05-07-deskclaw-skills-and-general-worker-design.md.
+See docs/superpowers/specs/2026-05-07-deskclaw-skills-and-general-worker-design.md
+and docs/superpowers/specs/2026-05-08-tend-proactive-triggers-design.md.
 """
 
 from __future__ import annotations
@@ -32,6 +33,9 @@ class SkillFrontmatterError(ValueError):
 class SkillFrontmatter:
     name: str
     description: str
+    triggers: tuple[dict, ...] = ()
+    events: tuple[str, ...] = ()
+    silent_default: bool = False
 
 
 _FENCE = "---"
@@ -45,48 +49,156 @@ def _esc(s: str) -> str:
     return _xml_escape(s, _QUOT_MAP)
 
 
-def parse_frontmatter(text: str) -> SkillFrontmatter:
-    """Parse the YAML-ish frontmatter at the start of a SKILL.md.
+def _strip_quotes(s: str) -> str:
+    if (s.startswith('"') and s.endswith('"')) or (
+        s.startswith("'") and s.endswith("'")
+    ):
+        return s[1:-1]
+    return s
 
-    v1 only supports two single-line keys: name, description. Both are
-    required. Values may be optionally wrapped in single or double quotes.
+
+def _parse_yaml_frontmatter_block(text: str) -> tuple[dict, str | None]:
+    """Minimal yaml-ish parser for our frontmatter dialect.
+
+    Supports:
+      key: value          (scalar)
+      key:                (block — list of scalars or dicts)
+        - scalar
+        - nested_key: nested_value
+          nested_key2: nested_value2
+
+    Quotes are stripped on scalars.  Returns ``(fields, bad_line)`` where
+    ``bad_line`` is the first unparseable top-level line encountered (or
+    ``None`` if everything parsed cleanly).  The caller decides whether to
+    raise on a bad line — deferring until after the fence-closure check
+    allows the more useful "unterminated" error to win.
+
+    Raises ``SkillFrontmatterError`` for structural problems (no opening
+    fence, no closing fence).
     """
     lines = text.splitlines()
     if not lines or lines[0].strip() != _FENCE:
         raise SkillFrontmatterError("no frontmatter fence at start of file")
-    fields: dict[str, str] = {}
+
     closed = False
-    bad_line: str | None = None
+    body_lines: list[str] = []
     for raw in lines[1:]:
         if raw.strip() == _FENCE:
             closed = True
             break
-        stripped = raw.strip()
+        body_lines.append(raw)
+
+    if not closed:
+        raise SkillFrontmatterError("unterminated frontmatter (no closing ---)")
+
+    out: dict = {}
+    bad_line: str | None = None
+    i = 0
+    while i < len(body_lines):
+        line = body_lines[i]
+        stripped = line.strip()
         if not stripped or stripped.startswith("#"):
+            i += 1
+            continue
+        if line.startswith(" ") or line.startswith("\t"):
+            # stray indented line at top level — skip
+            i += 1
             continue
         if ":" not in stripped:
-            # Defer raising — if the block is also unterminated, that's the
-            # more useful error to surface.
+            # Unparseable top-level line — defer to let caller prioritise
+            # "unterminated" over "unparseable".
             if bad_line is None:
-                bad_line = raw
+                bad_line = line
+            i += 1
             continue
         key, _, value = stripped.partition(":")
         key = key.strip()
         value = value.strip()
-        if (value.startswith('"') and value.endswith('"')) or (
-            value.startswith("'") and value.endswith("'")
-        ):
-            value = value[1:-1]
-        fields[key] = value
-    if not closed:
-        raise SkillFrontmatterError("unterminated frontmatter (no closing ---)")
+        if value:
+            # Scalar value on the same line
+            out[key] = _strip_quotes(value)
+            i += 1
+            continue
+        # No inline value — consume an indented block (list of scalars or dicts)
+        items: list = []
+        i += 1
+        cur_map: dict | None = None
+        while i < len(body_lines):
+            l2 = body_lines[i]
+            if not l2.strip():
+                i += 1
+                continue
+            if not (l2.startswith("  ") or l2.startswith("\t")):
+                # Back at top level — stop consuming the block
+                break
+            stripped2 = l2.strip()
+            if stripped2.startswith("- "):
+                # New list item
+                if cur_map is not None:
+                    items.append(cur_map)
+                first_kv = stripped2[2:].strip()
+                if ":" in first_kv:
+                    k, _, v = first_kv.partition(":")
+                    cur_map = {k.strip(): _strip_quotes(v.strip())}
+                else:
+                    items.append(_strip_quotes(first_kv))
+                    cur_map = None
+                i += 1
+                continue
+            # Continuation key-value inside the current dict item
+            if cur_map is not None and ":" in stripped2:
+                k, _, v = stripped2.partition(":")
+                cur_map[k.strip()] = _strip_quotes(v.strip())
+                i += 1
+                continue
+            i += 1  # skip unrecognised indented lines
+        if cur_map is not None:
+            items.append(cur_map)
+        out[key] = items
+
+    return out, bad_line
+
+
+def parse_frontmatter(text: str) -> SkillFrontmatter:
+    """Parse the YAML-ish frontmatter at the start of a SKILL.md."""
+    fields, bad_line = _parse_yaml_frontmatter_block(text)
+
     if bad_line is not None:
         raise SkillFrontmatterError(f"unparseable frontmatter line: {bad_line!r}")
-    if not fields.get("name"):
+
+    name = fields.get("name", "")
+    description = fields.get("description", "")
+
+    # An empty block-parse produces [] for name/description — treat as missing.
+    if not name:
         raise SkillFrontmatterError("frontmatter missing required key: name")
-    if not fields.get("description"):
+    if not description:
         raise SkillFrontmatterError("frontmatter missing required key: description")
-    return SkillFrontmatter(name=fields["name"], description=fields["description"])
+
+    triggers_raw = fields.get("triggers") or []
+    triggers: list[dict] = []
+    if isinstance(triggers_raw, list):
+        for item in triggers_raw:
+            if isinstance(item, dict):
+                triggers.append(item)
+            # non-dict entries (e.g. bare scalars) are silently skipped
+
+    events_raw = fields.get("events") or []
+    events: list[str] = []
+    if isinstance(events_raw, list):
+        for item in events_raw:
+            if isinstance(item, str):
+                events.append(item)
+
+    silent = str(fields.get("silent_default", "")).strip().lower() == "true"
+
+    return SkillFrontmatter(
+        name=str(name),
+        description=str(description),
+        triggers=tuple(triggers),
+        events=tuple(events),
+        silent_default=silent,
+    )
 
 
 @dataclass(frozen=True)
@@ -94,6 +206,9 @@ class SkillInfo:
     name: str
     description: str
     path: Path
+    triggers: tuple[dict, ...] = ()
+    events: tuple[str, ...] = ()
+    silent_default: bool = False
 
 
 def enumerate_skills(root: Path) -> list[SkillInfo]:
@@ -122,9 +237,17 @@ def enumerate_skills(root: Path) -> list[SkillInfo]:
             name=fm.name,
             description=fm.description,
             path=skill_md.resolve(),
+            triggers=fm.triggers,
+            events=fm.events,
+            silent_default=fm.silent_default,
         ))
     out.sort(key=lambda s: s.name)
     return out
+
+
+def find_event_subscribers(root: Path, kind: str) -> list[SkillInfo]:
+    """Return all skills under <root> whose ``events:`` list includes ``kind``."""
+    return [s for s in enumerate_skills(root) if kind in s.events]
 
 
 def format_catalog_xml(skills: list[SkillInfo]) -> str:
