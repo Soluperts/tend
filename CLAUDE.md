@@ -82,6 +82,8 @@ src/tend/
   brain.py         Brain (thin LLMAgent — build_llm + tools; remind_in wraps schedule)
   cron_store.py    JSON job store (jobs.json + jobs-state.json)
   cron_time.py     Pure helpers: parse_when, next_fire_at
+  dispatch.py      Shared event fan-out helper used by webhook + scheduler.
+  google_watcher.py  Schedule-watcher pure logic + run_tick orchestrator.
   scheduler.py     Scheduler BaseAgent — wall-clock dispatch loop
   webhook.py       aiohttp /say + /event receiver, token-authed, loopback-only
   skills.py        Skills layer (frontmatter parser learns triggers/events/silent_default)
@@ -147,6 +149,11 @@ GeneralWorker is the v1 reference: one worker handles every dispatch (Brain's `d
 - **No mid-stream cloud-service failover.** Lose the current turn if STT/TTS fails mid-frame; next turn falls back.
 - **No retry/backoff on failed scheduled jobs.** Recurring jobs wait for next scheduled fire; one-shot jobs delete after a single attempt.
 - **No outbound channel routing.** Scheduler/webhook announcements only go to local TTS in v1; Telegram/SMS delivery is a separate workstream.
+- **No Python wrapper around gws.** Skills shell out to `gws` directly.
+  Wrapping it is rejected as premature abstraction.
+- **Brain has no @tool methods for Google reads.** Calendar / Gmail
+  queries always go through GeneralWorker via `do_task`. ~3-5s extra
+  latency vs. ~300ms cached, traded for architectural coherence.
 
 ## Hardware assumptions
 
@@ -199,6 +206,34 @@ before editing any of `src/tend/{scheduler,announcer,webhook,cron_store,cron_tim
   `heartbeat` skill silently. The skill announces only when there is
   something genuinely worth saying. Disable with
   `[scheduler] heartbeat_every = "off"`.
+
+## Google integration
+
+`gws` (the Google Workspace CLI, npm `@googleworkspace/cli`) handles
+all Google API access. tend wraps nothing — skills shell out to `gws`
+directly. See `docs/google-setup.md` for the one-time setup procedure
+and `docs/superpowers/specs/2026-05-09-tend-google-and-daily-schedule-design.md`
+for the design.
+
+Three layers, all skills:
+
+- **Reads:** `briefing`, `meeting-prep`, `mail-triage` skills.
+- **Writes:** `routine-setup` (recurring events) and `schedule-block`
+  (one-off) skills, scoped to a tend-owned calendar via
+  `calendar.app.created` OAuth scope.
+- **Triggers:** `schedule-watcher` skill (heartbeat-fired every 15m)
+  parses bracket-tagged event titles (`[deep-work] Foo`,
+  `[lunch] Bar`) and creates one-shot scheduler jobs at exact phase
+  fire times. Reactive skills like `lunch-prep` and `post-deep-work`
+  subscribe via `events:` frontmatter.
+
+The scheduler supports two job dispatch modes:
+
+- Legacy: `payload.request` is sent to the GeneralWorker as a skill
+  request (the existing `do_task` path).
+- Event-mode: `event_kind` + `event_payload` set; dispatched via
+  `dispatch_event` (the same path as `POST /event`), fanning out to
+  all skills with matching `events:` frontmatter.
 
 ## When in doubt
 

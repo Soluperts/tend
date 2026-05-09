@@ -128,6 +128,10 @@ src/tend/
   brain.py      Brain (LLMContextAgent + tools)
   session.py    SessionManager (soul.md + daily reset)
   services.py   STT / TTS / brain LLM factories with preflight
+  scheduler.py  Wall-clock dispatch loop (legacy + event-mode jobs)
+  webhook.py    aiohttp /say + /event receiver (loopback-only)
+  dispatch.py   Shared event fan-out helper used by webhook + scheduler
+  google_watcher.py  Schedule-watcher pure logic + run_tick orchestrator
   config.py     pydantic-settings (TOML + env)
   main.py       AgentRunner setup, runs forever
 deploy/
