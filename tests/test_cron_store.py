@@ -124,3 +124,54 @@ def test_atomic_write_uses_temp_file(store, tmp_path, monkeypatch):
                       enabled=True)
     monkeypatch.setattr(os, "replace", real_replace)
     assert (tmp_path / "cron" / "jobs.json").read_text() == original
+
+
+def test_load_jobs_handles_corrupt_file(store, tmp_path):
+    """Garbage in jobs.json must not crash the loader."""
+    jobs_path = tmp_path / "cron" / "jobs.json"
+    jobs_path.parent.mkdir(parents=True, exist_ok=True)
+    jobs_path.write_text("{ this is not json", encoding="utf-8")
+    assert store.load_jobs() == []
+
+
+def test_load_state_handles_corrupt_file(store, tmp_path):
+    """Garbage in jobs-state.json must not crash the loader."""
+    state_path = tmp_path / "cron" / "jobs-state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text("garbage", encoding="utf-8")
+    # Defaults still readable for any id
+    assert store.get_state("anything") == JobState()
+
+
+def test_load_jobs_skips_malformed_row(store, tmp_path):
+    """A bad row entry shouldn't kill the rest of the load."""
+    jobs_path = tmp_path / "cron" / "jobs.json"
+    jobs_path.parent.mkdir(parents=True, exist_ok=True)
+    jobs_path.write_text(
+        '{"version": 1, "jobs": ['
+        '{"missing": "everything"},'
+        '{"id": "x", "name": "good", "kind": "every", "schedule": "1m",'
+        ' "tz": null, "payload": {}, "source": "cli", "enabled": true,'
+        ' "created_at": "2026-05-08T00:00:00+00:00"}]}',
+        encoding="utf-8",
+    )
+    jobs = store.load_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].name == "good"
+
+
+def test_load_jobs_ignores_unknown_fields(store, tmp_path):
+    """Forward-compat: extra fields in jobs.json don't crash the loader."""
+    jobs_path = tmp_path / "cron" / "jobs.json"
+    jobs_path.parent.mkdir(parents=True, exist_ok=True)
+    jobs_path.write_text(
+        '{"version": 1, "jobs": ['
+        '{"id": "x", "name": "good", "kind": "every", "schedule": "1m",'
+        ' "tz": null, "payload": {}, "source": "cli", "enabled": true,'
+        ' "created_at": "2026-05-08T00:00:00+00:00",'
+        ' "future_field": "tend-of-tomorrow"}]}',
+        encoding="utf-8",
+    )
+    jobs = store.load_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].name == "good"

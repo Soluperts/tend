@@ -7,6 +7,12 @@ Two files under <root>/cron/:
 
 Atomic writes via temp-file-rename mirror SessionStore's pattern so a
 partial write never produces a corrupt file.
+
+Concurrency model: this module is designed for a single writer. The
+running tend daemon owns jobs.json and jobs-state.json while it is
+alive. The `tend schedule ...` CLI is a planning aid that should only
+be used while the daemon is stopped (or with the understanding that
+edits can race with the daemon's own writes).
 """
 
 from __future__ import annotations
@@ -15,9 +21,11 @@ import json
 import os
 import tempfile
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
+
+from loguru import logger
 
 
 SCHEMA_VERSION = 1
@@ -60,6 +68,20 @@ def _atomic_write_text(path: Path, content: str) -> None:
         raise
 
 
+def _row_to_cronjob(row: dict) -> CronJob:
+    """Construct a CronJob from a dict, ignoring unknown keys for
+    forward-compat with hand-edited or newer-schema files."""
+    fields = {f.name for f in CronJob.__dataclass_fields__.values()}
+    return CronJob(**{k: v for k, v in row.items() if k in fields})
+
+
+def _row_to_jobstate(row: dict) -> JobState:
+    """Construct a JobState from a dict, ignoring unknown keys for
+    forward-compat with hand-edited or newer-schema files."""
+    fields = {f.name for f in JobState.__dataclass_fields__.values()}
+    return JobState(**{k: v for k, v in row.items() if k in fields})
+
+
 class CronStore:
     """JSON-backed scheduled-job store."""
 
@@ -73,8 +95,19 @@ class CronStore:
     def load_jobs(self) -> list[CronJob]:
         if not self._jobs_path.exists():
             return []
-        data = json.loads(self._jobs_path.read_text(encoding="utf-8"))
-        return [CronJob(**row) for row in data.get("jobs", [])]
+        try:
+            data = json.loads(self._jobs_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning(f"jobs.json unreadable ({e!r}); treating as empty")
+            return []
+        rows = data.get("jobs") or []
+        out: list[CronJob] = []
+        for row in rows:
+            try:
+                out.append(_row_to_cronjob(row))
+            except (TypeError, KeyError) as e:
+                logger.warning(f"skipping malformed job row {row!r}: {e}")
+        return out
 
     def save_jobs(self, jobs: Iterable[CronJob]) -> None:
         payload = {
@@ -130,9 +163,19 @@ class CronStore:
     def _load_all_state(self) -> dict[str, JobState]:
         if not self._state_path.exists():
             return {}
-        data = json.loads(self._state_path.read_text(encoding="utf-8"))
-        states = data.get("states", {})
-        return {k: JobState(**v) for k, v in states.items()}
+        try:
+            data = json.loads(self._state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning(f"jobs-state.json unreadable ({e!r}); treating as empty")
+            return {}
+        states = data.get("states") or {}
+        out: dict[str, JobState] = {}
+        for k, v in states.items():
+            try:
+                out[k] = _row_to_jobstate(v)
+            except (TypeError, AttributeError) as e:
+                logger.warning(f"skipping malformed state row {k!r}: {e}")
+        return out
 
     def _save_all_state(self, all_state: dict[str, JobState]) -> None:
         payload = {
