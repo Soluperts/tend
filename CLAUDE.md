@@ -22,18 +22,20 @@ Workers are children of Brain, persistent across wake/sleep, and can publish fra
 
 ```
 AgentRunner (in-process AsyncQueueBus)
-└── Hub (BaseAgent, always running) — owns LLMContext
-      pipeline:
-        transport.in → VAD → OpenWakeWordGate → STT
-          → InputLatencyLogger → SleepPhraseGate
-          → user_aggregator → BusBridgeProcessor (unnamed bridge)
-          → TTS → OutputLatencyLogger → transport.out
-          → assistant_aggregator
-      └── Brain (LLMAgent, bridged=(), starts inactive)
-            pipeline: [LLM]   (default LLMAgent.build_pipeline)
-            └── Workers (lazy, persistent across wake/sleep)
-                  e.g. ReminderWorker (v1 stub),
-                       GeneralWorker (skill-driven worker)
+├── Hub (BaseAgent, always running) — owns LLMContext + ProactiveAnnouncer ref
+│     pipeline:
+│       transport.in → VAD → OpenWakeWordGate → STT
+│         → InputLatencyLogger → SleepPhraseGate
+│         → user_aggregator → BusBridgeProcessor (unnamed bridge)
+│         → TTS → OutputLatencyLogger → transport.out
+│         → assistant_aggregator
+│     └── Brain (LLMAgent, bridged=(), starts inactive)
+│           pipeline: [LLM]   (default LLMAgent.build_pipeline)
+│           └── GeneralWorker (eager-registered; uses ProactiveAnnouncer)
+└── Scheduler (BaseAgent, peer to Hub) — owns wall-clock + jobs.json/jobs-state.json
+
+WebhookServer (aiohttp on 127.0.0.1:7331) — POST /say, /event
+  publishes via the same ProactiveAnnouncer that Scheduler and GeneralWorker use
 ```
 
 Frame flow on a turn:
@@ -70,28 +72,32 @@ under `[workers.general]` in `tend.toml`.
 ```
 src/tend/
   audio/
-    hub.py         Hub agent — audio + STT/TTS + LLMContext + aggregators
-    gates.py       OpenWakeWordGate (pre-STT, with cooldown), SleepPhraseGate (post-STT)
+    hub.py         Hub agent — audio + STT/TTS + LLMContext + announcer drain
+    gates.py       OpenWakeWordGate, SleepPhraseGate (calls hub.on_brain_deactivated)
     logging.py     Input/OutputLatencyLogger (pass-through, debug only)
   workers/
     claude_cli.py  ClaudeCliWorker (base — runs `claude` CLI subprocess)
-    general.py     GeneralWorker (skill-driven; replaces former CodingWorker)
-    reminder.py    ReminderWorker (v1 stub)
-  skills.py        skill catalog + safety scanner
-  brain.py         Brain (thin LLMAgent — build_llm + tools + on_task_update)
+    general.py     GeneralWorker (skill-driven; silent_default heartbeat mode; routes via announcer)
+  announcer.py     ProactiveAnnouncer — single TTS funnel; cooldown/deferral/urgency
+  brain.py         Brain (thin LLMAgent — build_llm + tools; remind_in wraps schedule)
+  cron_store.py    JSON job store (jobs.json + jobs-state.json)
+  cron_time.py     Pure helpers: parse_when, next_fire_at
+  scheduler.py     Scheduler BaseAgent — wall-clock dispatch loop
+  webhook.py       aiohttp /say + /event receiver, token-authed, loopback-only
+  skills.py        Skills layer (frontmatter parser learns triggers/events/silent_default)
   session.py       SessionManager (soul.md, daily reset → Hub.reset_session)
   sessions.py      SessionStore (per-worker persistent session metadata)
   services.py      STT / TTS / brain LLM factories with preflight + fallback
   preflight.py     `claude` CLI preflight check
   config.py        Settings (pydantic-settings, TOML + env)
-  cli.py           `tend` CLI subcommands (skills, scan-skill, etc.)
+  cli.py           `tend` CLI — sessions / skills / scan-skill / schedule / webhook test
   main.py          AgentRunner setup; entry point
 scripts/
   audio_check.py   Standalone PyAudio mic/speaker sanity probe
 deploy/
   tend.service     systemd user unit
 soul.md            committed persona / context (loaded into system prompt)
-tend.toml          committed default settings
+tend.toml          committed default settings (now includes [scheduler], [webhook], [announcer])
 ```
 
 ## Privacy model
@@ -139,6 +145,8 @@ GeneralWorker is the v1 reference: one worker handles every dispatch (Brain's `d
 - **No distributed deployment.** In-process AsyncQueueBus only.
 - **No worker durability across process restart.** systemd brings the process back up clean.
 - **No mid-stream cloud-service failover.** Lose the current turn if STT/TTS fails mid-frame; next turn falls back.
+- **No retry/backoff on failed scheduled jobs.** Recurring jobs wait for next scheduled fire; one-shot jobs delete after a single attempt.
+- **No outbound channel routing.** Scheduler/webhook announcements only go to local TTS in v1; Telegram/SMS delivery is a separate workstream.
 
 ## Hardware assumptions
 
@@ -167,6 +175,30 @@ python scripts/audio_check.py loopback  # record + play back
 Config via `tend.toml` (committed) and `.env` (gitignored, secrets only). See README.
 
 Logs: `/tmp/tend.log` (loguru, 5 MB rotation). Faults: `/tmp/tend.faults.log` (faulthandler). systemd journal: `journalctl --user -u tend`.
+
+## Proactive triggers
+
+The scheduler + announcer + webhook stack lets tend act without being
+asked. Read `docs/superpowers/specs/2026-05-08-tend-proactive-triggers-design.md`
+before editing any of `src/tend/{scheduler,announcer,webhook,cron_store,cron_time}.py`.
+
+- **Voice authoring:** `Brain.schedule(when, request, name)`. `when`
+  accepts cron expressions, `in 30m`-style relatives, ISO timestamps,
+  or `every 30m`.
+- **Skill defaults:** `triggers:` entries in `SKILL.md` frontmatter are
+  inert until the user runs `enable_skill_triggers <skill>` (voice) or
+  edits `~/.tend/cron/jobs.json` while tend is stopped.
+- **External producers:** see `docs/integrating-with-tend.md`. Vision
+  daemon, Gmail webhooks, etc. POST to `127.0.0.1:7331/say` or
+  `/event` with a Bearer token from `TEND_WEBHOOK_TOKEN`.
+- **Cooldown / deferral:** all proactive announcements go through
+  `ProactiveAnnouncer.announce` so they share one cooldown registry
+  (per-category) and queue while Brain is mid-conversation.
+  `urgent=True` bypasses both.
+- **Heartbeat:** an `every 30m` job seeded at first boot dispatches the
+  `heartbeat` skill silently. The skill announces only when there is
+  something genuinely worth saying. Disable with
+  `[scheduler] heartbeat_every = "off"`.
 
 ## When in doubt
 
