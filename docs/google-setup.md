@@ -71,6 +71,7 @@ You should see all three scopes listed.
 Once on the Pi:
 
 ```bash
+mkdir -p ~/.tend/google
 GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=$HOME/.tend/secrets/google-creds.json \
   gws calendar +insert \
     --summary "tend" \
@@ -79,7 +80,6 @@ GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=$HOME/.tend/secrets/google-creds.json \
   | jq -r '.id' \
   > ~/.tend/google/tend-calendar-id
 
-mkdir -p ~/.tend/google
 cat ~/.tend/google/tend-calendar-id   # sanity-check the ID is there
 ```
 
