@@ -53,6 +53,9 @@ class FakeHub:
         self._brain.active = False
         self._brain.deactivations += 1
 
+    async def on_brain_deactivated(self):
+        pass
+
 
 async def _push_through(processor, frame):
     captured = []

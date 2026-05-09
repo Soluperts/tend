@@ -183,6 +183,7 @@ class SleepPhraseGate(FrameProcessor):
             if self._brain.active:
                 logger.info(f"[sleep] silence timeout ({self._timeout_s}s) -> deactivating brain")
                 await self._hub.deactivate_agent("brain")
+                await self._hub.on_brain_deactivated()
         except asyncio.CancelledError:
             pass
 
@@ -209,6 +210,7 @@ class SleepPhraseGate(FrameProcessor):
                 if self._silence_task and not self._silence_task.done():
                     self._silence_task.cancel()
                 await self._hub.deactivate_agent("brain")
+                await self._hub.on_brain_deactivated()
                 return  # swallow
             # Reset timer on any successful transcription too.
             self._reset_silence_timer()

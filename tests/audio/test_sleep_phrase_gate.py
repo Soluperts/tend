@@ -22,6 +22,7 @@ def mock_brain():
 def mock_hub():
     h = MagicMock()
     h.deactivate_agent = AsyncMock()
+    h.on_brain_deactivated = AsyncMock()
     return h
 
 

@@ -58,6 +58,7 @@ class Hub(BaseAgent):
         tts: TTSService,
         tts_sample_rate: int,
         brain: BaseAgent,
+        announcer=None,
     ):
         super().__init__(name, bus=bus)
         self._settings = settings
@@ -65,11 +66,22 @@ class Hub(BaseAgent):
         self._tts = tts
         self._tts_sample_rate = tts_sample_rate
         self._brain = brain
+        self._announcer = announcer
         self._context = LLMContext()
 
     @property
     def context(self) -> LLMContext:
         return self._context
+
+    async def on_brain_deactivated(self) -> None:
+        """Called when Brain transitions from active to inactive.
+
+        Flushes any queued announcements from the ProactiveAnnouncer so that
+        pending notifications are delivered as soon as Brain goes to sleep.
+        Safe to call without an announcer (no-op).
+        """
+        if self._announcer is not None:
+            await self._announcer.drain_pending()
 
     async def reset_session(self, soul_text: str) -> None:
         """Replace the LLMContext's messages with a fresh system prompt only."""
