@@ -8,6 +8,7 @@ StartLimitIntervalSec=300
 [Service]
 Type=simple
 WorkingDirectory=%h/tend
+Environment=GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=%h/.tend/secrets/google-creds.json
 ExecStart=%h/tend/.venv/bin/python -m tend
 Restart=on-failure
 RestartSec=2s

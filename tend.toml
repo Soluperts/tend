@@ -39,7 +39,7 @@ allowed_tools = ["Read", "Edit", "Write", "Bash", "Grep", "Glob"]
 workspace_dir = "~/.tend/workspace"
 
 [scheduler]
-heartbeat_every = "30m"
+heartbeat_every = "off"
 missed_at_policy = "run-on-restart"
 
 [webhook]
@@ -52,3 +52,22 @@ default_cooldown_s = 300
 [announcer.category]
 posture = 600
 hydration = 900
+
+[google]
+watched_calendars = ["tend", "primary"]
+
+[google.events.deep-work]
+upcoming_lead = "5m"
+emit = ["upcoming", "starting", "ended"]
+
+[google.events.lunch]
+upcoming_lead = "60m"
+emit = ["upcoming", "starting"]
+
+[google.events.exercise]
+upcoming_lead = "15m"
+emit = ["upcoming", "starting", "ended"]
+
+[google.events.break]
+upcoming_lead = "0m"
+emit = ["starting"]
