@@ -10,6 +10,8 @@ whisper_model = "tiny.en"
 # TTS
 elevenlabs_voice_id = "4cYYCJZtDFOV61Rs1Eoa"
 elevenlabs_model = "eleven_turbo_v2_5"
+# Playback speed (ElevenLabs accepts ~0.7–1.2). Comment out for default.
+# elevenlabs_speed = 1.0
 piper_voice = "en_US-ryan-high"
 
 # Audio
