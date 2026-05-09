@@ -82,8 +82,13 @@ def _seed_heartbeat_skill() -> None:
     target.write_text(HEARTBEAT_SKILL_BODY, encoding="utf-8")
 
 
-SCHEDULE_WATCHER_SKILL_DIR = (
-    Path(__file__).resolve().parents[2] / "skills" / "schedule-watcher"
+_REPO_SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
+
+REPO_SKILL_NAMES = (
+    "schedule-watcher",
+    "briefing",
+    "meeting-prep",
+    "mail-triage",
 )
 
 
@@ -203,7 +208,8 @@ async def _run() -> None:
 
     # Seed heartbeat skill on first boot if missing.
     _seed_heartbeat_skill()
-    _seed_skill_from_repo(SCHEDULE_WATCHER_SKILL_DIR)
+    for name in REPO_SKILL_NAMES:
+        _seed_skill_from_repo(_REPO_SKILLS_DIR / name)
 
     # Webhook server — start before runner.run() so it is ready immediately.
     webhook_app = build_app(
