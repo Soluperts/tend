@@ -38,12 +38,14 @@ class Brain(LLMAgent):
         session_manager=None,
         store: SessionStore | None = None,
         scheduler=None,
+        general_worker=None,
     ):
         super().__init__(name, bus=bus, bridged=())
         self._llm_service = llm_service
         self._session_manager = session_manager
         self._store = store
         self._scheduler = scheduler
+        self._general_worker = general_worker
 
     def attach_session_manager(self, session_manager) -> None:
         self._session_manager = session_manager
@@ -55,6 +57,19 @@ class Brain(LLMAgent):
                 "(or the brain should not be added to the runner if Anthropic preflight failed)."
             )
         return self._llm_service
+
+    async def on_ready(self) -> None:
+        """Register the eager-constructed GeneralWorker now that the bus is live.
+
+        `BaseAgent.add_agent` publishes a BusLocalMessage; that message is only
+        delivered to currently-subscribed handlers. The runner subscribes inside
+        `runner.run()`, so calling `add_agent` from `__init__` would silently drop
+        the registration. By contrast, `on_ready` fires after the bus is alive and
+        the runner is subscribed — so the registration actually lands.
+        """
+        await super().on_ready()
+        if self._general_worker is not None:
+            await self.add_agent(self._general_worker)
 
     async def on_deactivated(self) -> None:
         await super().on_deactivated()

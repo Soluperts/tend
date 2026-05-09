@@ -4,14 +4,14 @@ Boot order:
 1. Configure logging (loguru + faulthandler).
 2. Load Settings from class defaults / tend.toml / .env / env vars.
 3. Run cloud preflights; build STT, TTS, Brain LLM (with local fallbacks).
-4. Construct AgentRunner, ProactiveAnnouncer, Scheduler, Brain, SessionManager,
-   Hub, WebhookServer.
-5. Eagerly register GeneralWorker as a Brain child.
-6. SessionManager.start() loads soul.md and triggers the first reset_session.
-7. Hub and Scheduler are added as top-level agents. Hub adds Brain as a child
-   on_ready. Scheduler starts its loop on_ready.
-8. Seed heartbeat skill + heartbeat job (idempotent on subsequent boots).
-9. runner.run() — listens forever. WebhookServer starts before the loop and
+4. Construct AgentRunner, ProactiveAnnouncer, Scheduler, GeneralWorker, Brain
+   (with general_worker=general), SessionManager, Hub, WebhookServer.
+5. SessionManager.start() loads soul.md and triggers the first reset_session.
+6. Hub and Scheduler are added as top-level agents. Hub adds Brain as a child
+   on_ready. Brain.on_ready registers GeneralWorker on the (now-live) bus.
+   Scheduler.on_ready fires missed at-jobs then starts the loop.
+7. Seed heartbeat skill + heartbeat job (idempotent on subsequent boots).
+8. runner.run() — listens forever. WebhookServer starts before the loop and
    stops in a finally block.
 """
 
@@ -150,9 +150,17 @@ async def _run() -> None:
         missed_at_policy=settings.scheduler.missed_at_policy,
     )
 
+    # Eagerly construct GeneralWorker so scheduler/webhook can dispatch
+    # before the user has spoken; Brain.on_ready will register it on the bus.
+    cfg = settings.workers.get("general") or WorkerConfig()
+    general = GeneralWorker(
+        "general", bus=runner.bus, store=store, config=cfg,
+        announcer=announcer,
+    )
+
     brain = Brain(
         "brain", bus=runner.bus, llm_service=llm_service, store=store,
-        scheduler=scheduler,
+        scheduler=scheduler, general_worker=general,
     )
     announcer_holder["brain"] = brain
 
@@ -175,16 +183,6 @@ async def _run() -> None:
     brain.attach_session_manager(session_manager)
     await session_manager.start()
 
-    # Eagerly register the GeneralWorker so scheduler/webhook fires can
-    # land even before the user has spoken (Brain adds workers as children
-    # on demand, but we pre-register to avoid a race on first heartbeat).
-    cfg = settings.workers.get("general") or WorkerConfig()
-    general = GeneralWorker(
-        "general", bus=runner.bus, store=store, config=cfg,
-        announcer=announcer,
-    )
-    await brain.add_agent(general)
-
     # Seed heartbeat skill on first boot if missing.
     _seed_heartbeat_skill()
 
@@ -206,10 +204,8 @@ async def _run() -> None:
     try:
         await runner.add_agent(hub)
         await runner.add_agent(scheduler)
-        # Seed heartbeat job AFTER scheduler is registered (add_job sets
-        # _wakeup; the loop only starts on on_ready after add_agent).
+        # Now that the scheduler is registered, seed the heartbeat job.
         _seed_heartbeat_job(scheduler, settings.scheduler.heartbeat_every)
-        await scheduler.fire_missed_now()
         await runner.run()
     finally:
         await webhook_server.stop()

@@ -122,7 +122,7 @@ src/tend/
   audio/        Hub (audio agent), gates, latency loggers
   workers/      Worker agents
     general.py        GeneralWorker (skill-driven; replaces former CodingWorker)
-    reminder.py       ReminderWorker (timer/reminder stub)
+    reminder         (none — Brain.remind_in now wraps the scheduler)
     claude_cli.py     ClaudeCliWorker (base — runs `claude` CLI subprocess)
   skills.py     Skill catalog + safety scanner (~/.tend/skills/)
   brain.py      Brain (LLMContextAgent + tools)

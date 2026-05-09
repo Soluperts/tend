@@ -109,6 +109,8 @@ class Scheduler(BaseAgent):
 
     async def on_ready(self) -> None:
         await super().on_ready()
+        # Fire missed at-jobs now that the bus is alive and dispatch can land.
+        await self.fire_missed_now()
         self._loop_task = asyncio.create_task(self._run_loop())
 
     async def on_stopped(self) -> None:
