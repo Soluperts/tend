@@ -91,6 +91,8 @@ REPO_SKILL_NAMES = (
     "mail-triage",
     "routine-setup",
     "schedule-block",
+    "lunch-prep",
+    "post-deep-work",
 )
 
 
