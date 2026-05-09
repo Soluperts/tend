@@ -175,3 +175,42 @@ def test_load_jobs_ignores_unknown_fields(store, tmp_path):
     jobs = store.load_jobs()
     assert len(jobs) == 1
     assert jobs[0].name == "good"
+
+
+def test_add_job_persists_event_fields(tmp_path):
+    store = CronStore(root=tmp_path)
+    job = store.add_job(
+        name="lunch-fire", kind="at",
+        schedule="2026-12-31T11:00:00+00:00",
+        tz="UTC", payload={}, source="schedule-watcher",
+        enabled=True,
+        event_kind="lunch.upcoming",
+        event_payload={"event_id": "abc123"},
+    )
+    assert job.event_kind == "lunch.upcoming"
+    assert job.event_payload == {"event_id": "abc123"}
+    reloaded = store.load_jobs()
+    assert len(reloaded) == 1
+    assert reloaded[0].event_kind == "lunch.upcoming"
+    assert reloaded[0].event_payload == {"event_id": "abc123"}
+
+
+def test_legacy_job_without_event_fields_loads_with_defaults(tmp_path):
+    """A jobs.json predating event-mode must still load, with both fields None."""
+    import json
+    cron_dir = tmp_path / "cron"
+    cron_dir.mkdir()
+    (cron_dir / "jobs.json").write_text(json.dumps({
+        "version": 1,
+        "jobs": [{
+            "id": "deadbeef", "name": "old", "kind": "every",
+            "schedule": "30m", "tz": "UTC", "payload": {"request": "x"},
+            "source": "cli", "enabled": True,
+            "created_at": "2026-01-01T00:00:00+00:00",
+        }],
+    }))
+    store = CronStore(root=tmp_path)
+    rows = store.load_jobs()
+    assert len(rows) == 1
+    assert rows[0].event_kind is None
+    assert rows[0].event_payload is None
