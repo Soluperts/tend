@@ -105,3 +105,86 @@ async def test_cancel_schedule_unknown(brain, scheduler):
     await brain.cancel_schedule(p, name_or_id="nope")
     msg = p.result_callback.call_args.args[0]
     assert "find" in msg.lower() or "no" in msg.lower()
+
+
+async def test_enable_skill_triggers_copies_into_scheduler(brain, scheduler, tmp_path, monkeypatch):
+    # Seed a skill with two triggers.
+    skill_dir = tmp_path / "meal-plan"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: meal-plan\n"
+        "description: x\n"
+        "triggers:\n"
+        "  - cron: \"0 12 * * *\"\n"
+        "    tz: UTC\n"
+        "    request: lunch\n"
+        "  - cron: \"0 19 * * *\"\n"
+        "    tz: UTC\n"
+        "    request: dinner\n"
+        "---\nbody\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TEND_SKILLS_ROOT", str(tmp_path))
+
+    # find_by_source returns nothing the first time (no prior copies)
+    scheduler.find_by_source = MagicMock(return_value=[])
+    scheduler.cancel_job = MagicMock(return_value=True)
+
+    p = _params()
+    await brain.enable_skill_triggers(p, skill="meal-plan")
+    assert scheduler.add_job.call_count == 2
+    sources = {c.kwargs["source"] for c in scheduler.add_job.call_args_list}
+    assert sources == {"skill:meal-plan"}
+
+
+async def test_enable_skill_triggers_idempotent_replaces_existing(brain, scheduler, tmp_path, monkeypatch):
+    skill_dir = tmp_path / "x"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: x\ndescription: y\n"
+        "triggers:\n  - cron: \"0 12 * * *\"\n    request: hi\n"
+        "---\nbody\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TEND_SKILLS_ROOT", str(tmp_path))
+
+    old1 = MagicMock()
+    old1.id = "old1"
+    old2 = MagicMock()
+    old2.id = "old2"
+    scheduler.find_by_source = MagicMock(return_value=[old1, old2])
+    scheduler.cancel_job = MagicMock(return_value=True)
+
+    p = _params()
+    await brain.enable_skill_triggers(p, skill="x")
+    assert scheduler.cancel_job.call_count == 2
+    assert scheduler.add_job.call_count == 1
+
+
+async def test_disable_skill_triggers_removes_only_matching_source(brain, scheduler):
+    one = MagicMock()
+    one.id = "one"
+    two = MagicMock()
+    two.id = "two"
+    scheduler.find_by_source = MagicMock(return_value=[one, two])
+    scheduler.cancel_job = MagicMock(return_value=True)
+    p = _params()
+    await brain.disable_skill_triggers(p, skill="meal-plan")
+    assert scheduler.cancel_job.call_count == 2
+
+
+async def test_enable_skill_triggers_no_triggers_returns_message(brain, scheduler, tmp_path, monkeypatch):
+    skill_dir = tmp_path / "bare"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: bare\ndescription: y\n---\nbody\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TEND_SKILLS_ROOT", str(tmp_path))
+    scheduler.find_by_source = MagicMock(return_value=[])
+    p = _params()
+    await brain.enable_skill_triggers(p, skill="bare")
+    msg = p.result_callback.call_args.args[0]
+    assert "no triggers" in msg.lower()

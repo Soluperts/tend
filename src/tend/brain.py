@@ -328,3 +328,72 @@ class Brain(LLMAgent):
             await params.result_callback(
                 f"Couldn't find a schedule matching '{name_or_id}'."
             )
+
+    @tool
+    async def enable_skill_triggers(
+        self, params: FunctionCallParams, skill: str,
+    ):
+        """Activate the schedule triggers declared in a skill's frontmatter.
+
+        Idempotent: re-running replaces any previously copied triggers for
+        this skill.
+        """
+        if self._scheduler is None:
+            await params.result_callback("Scheduler not configured.")
+            return
+        import os as _os
+        from pathlib import Path as _Path
+
+        from tend.skills import enumerate_skills
+
+        root = _Path(
+            _os.environ.get("TEND_SKILLS_ROOT")
+            or _Path.home() / ".tend" / "skills"
+        )
+        matching = [s for s in enumerate_skills(root) if s.name == skill]
+        if not matching:
+            await params.result_callback(f"No skill named '{skill}'.")
+            return
+        info = matching[0]
+        if not info.triggers:
+            await params.result_callback(
+                f"'{skill}' has no triggers declared in its frontmatter."
+            )
+            return
+        # Wipe any prior copies of this source first.
+        source = f"skill:{skill}"
+        for old in self._scheduler.find_by_source(source):
+            self._scheduler.cancel_job(old.id)
+        added = 0
+        for t in info.triggers:
+            when = t.get("cron") or t.get("every") or t.get("at")
+            if not when:
+                continue
+            request = t.get("request") or f"Run {skill}."
+            self._scheduler.add_job(
+                when=when, request=request,
+                name=f"{skill}-{added+1}",
+                source=source,
+                tz=t.get("tz"),
+                payload_extras={"skill": skill},
+            )
+            added += 1
+        await params.result_callback(
+            f"Enabled {added} trigger(s) for '{skill}'."
+        )
+
+    @tool
+    async def disable_skill_triggers(
+        self, params: FunctionCallParams, skill: str,
+    ):
+        """Remove all schedule triggers previously enabled from a skill."""
+        if self._scheduler is None:
+            await params.result_callback("Scheduler not configured.")
+            return
+        source = f"skill:{skill}"
+        rows = self._scheduler.find_by_source(source)
+        for r in rows:
+            self._scheduler.cancel_job(r.id)
+        await params.result_callback(
+            f"Disabled {len(rows)} trigger(s) for '{skill}'."
+        )
