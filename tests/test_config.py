@@ -70,25 +70,26 @@ def test_secrets_loaded_from_env(monkeypatch, tmp_path):
     assert s.elevenlabs_api_key == "el-test"
 
 
-def test_scheduler_config_defaults_present(monkeypatch, tmp_path):
-    from tend.config import Settings
-    s = Settings()
-    assert s.scheduler.heartbeat_every == "30m"
-    assert s.scheduler.missed_at_policy == "run-on-restart"
+def test_scheduler_config_defaults_present():
+    """The model itself ships sensible defaults; tend.toml may override."""
+    from tend.config import SchedulerConfig
+    c = SchedulerConfig()
+    assert c.heartbeat_every == "30m"
+    assert c.missed_at_policy == "run-on-restart"
 
 
 def test_webhook_config_defaults_present():
-    from tend.config import Settings
-    s = Settings()
-    assert s.webhook.host == "127.0.0.1"
-    assert s.webhook.port == 7331
+    from tend.config import WebhookConfig
+    c = WebhookConfig()
+    assert c.host == "127.0.0.1"
+    assert c.port == 7331
 
 
 def test_announcer_config_defaults_present():
-    from tend.config import Settings
-    s = Settings()
-    assert s.announcer.default_cooldown_s == 300
-    assert isinstance(s.announcer.category, dict)
+    from tend.config import AnnouncerConfig
+    c = AnnouncerConfig()
+    assert c.default_cooldown_s == 300
+    assert isinstance(c.category, dict)
 
 
 def test_webhook_token_from_env(monkeypatch):

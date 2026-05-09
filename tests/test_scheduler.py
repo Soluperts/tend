@@ -161,3 +161,44 @@ def test_add_job_invalid_tz_does_not_persist(store, dispatch):
             source="cli", tz="Mars/Capital",
         )
     assert store.load_jobs() == []
+
+
+def test_compute_wait_s_caps_far_future_jobs(store, dispatch):
+    """When the next due job is far in the future, the loop's nap is
+    bounded by _MAX_NAP_S so external CLI writes get noticed within
+    that cap."""
+    s = _new_scheduler(store, dispatch)
+    job = s.add_job(when="every 1m", request="x", name="ping",
+                    source="voice")
+    now = dt.datetime.now(tz=UTC)
+    far_future = (job, now + dt.timedelta(hours=1))
+    wait_s = s._compute_wait_s(far_future, now)
+    assert wait_s == s._MAX_NAP_S
+
+
+def test_compute_wait_s_no_jobs_caps_at_max(store, dispatch):
+    s = _new_scheduler(store, dispatch)
+    now = dt.datetime.now(tz=UTC)
+    wait_s = s._compute_wait_s(None, now)
+    assert wait_s == s._MAX_NAP_S
+
+
+def test_compute_wait_s_returns_zero_for_due_job(store, dispatch):
+    s = _new_scheduler(store, dispatch)
+    job = s.add_job(when="every 1m", request="x", name="ping",
+                    source="voice")
+    now = dt.datetime.now(tz=UTC)
+    past = (job, now - dt.timedelta(seconds=10))
+    wait_s = s._compute_wait_s(past, now)
+    assert wait_s == 0.0
+
+
+def test_compute_wait_s_short_horizon_pass_through(store, dispatch):
+    """If the next job is within the cap window, return that exact value."""
+    s = _new_scheduler(store, dispatch)
+    job = s.add_job(when="every 30m", request="x", name="ping",
+                    source="voice")
+    now = dt.datetime.now(tz=UTC)
+    soon = (job, now + dt.timedelta(seconds=10))
+    wait_s = s._compute_wait_s(soon, now)
+    assert 9.0 < wait_s < 11.0

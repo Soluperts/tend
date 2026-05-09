@@ -159,17 +159,33 @@ class Scheduler(BaseAgent):
 
     # ---- internals ----
 
+    # Maximum nap before the loop re-reads jobs.json. Bounded so out-of-process
+    # writes (the `tend schedule ...` CLI) get picked up within a minute even
+    # though they can't signal our in-process `_wakeup` event.
+    _MAX_NAP_S = 60.0
+
+    def _compute_wait_s(
+        self, soonest: tuple[CronJob, dt.datetime] | None, now: dt.datetime,
+    ) -> float:
+        """How long the dispatch loop should nap before re-evaluating.
+
+        Capped at ``_MAX_NAP_S`` so external writers (the CLI) don't get
+        ignored for arbitrarily long periods just because the in-memory
+        soonest job is far away.
+        """
+        if soonest is None:
+            base = self._MAX_NAP_S
+        else:
+            _, when = soonest
+            base = max(0.0, (when - now).total_seconds())
+        return min(base, self._MAX_NAP_S)
+
     async def _run_loop(self) -> None:
         while True:
             now = dt.datetime.now(tz=ZoneInfo("UTC"))
             jobs = [j for j in self._store.load_jobs() if j.enabled]
             soonest = self._next_due_after(jobs, now)
-            if soonest is None:
-                # No jobs; sleep up to a minute then re-check.
-                wait_s = 60.0
-            else:
-                job, when = soonest
-                wait_s = max(0.0, (when - now).total_seconds())
+            wait_s = self._compute_wait_s(soonest, now)
             try:
                 await asyncio.wait_for(self._wakeup.wait(), timeout=wait_s)
                 # Wakeup signal — re-evaluate.
@@ -177,10 +193,15 @@ class Scheduler(BaseAgent):
                 continue
             except asyncio.TimeoutError:
                 pass
-            # Timed out — soonest is due.
+            # Timed out — either the soonest job is due, or we just hit the
+            # cap and need to re-poll the store for out-of-process additions.
             if soonest is None:
                 continue
-            job, _ = soonest
+            job, when = soonest
+            if when > dt.datetime.now(tz=ZoneInfo("UTC")):
+                # Cap fired before this job was actually due; loop again
+                # so any newly-added job has a chance to be seen.
+                continue
             await self._fire_job(job)
 
     def _next_due_after(
