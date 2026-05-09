@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+from pathlib import Path
 from typing import Awaitable, Callable, Literal
 from zoneinfo import ZoneInfo
 
@@ -40,12 +41,14 @@ class Scheduler(BaseAgent):
         bus: AgentBus,
         store: CronStore,
         dispatch: Callable[[str, dict], Awaitable[None]],
+        skills_root: Path | None = None,
         default_tz: str = "UTC",
         missed_at_policy: MissedPolicy = "run-on-restart",
     ):
         super().__init__(name, bus=bus)
         self._store = store
         self._dispatch = dispatch
+        self._skills_root = skills_root
         self._default_tz = default_tz
         self._missed_policy = missed_at_policy
         self._loop_task: asyncio.Task | None = None
@@ -62,6 +65,8 @@ class Scheduler(BaseAgent):
         source: str,
         tz: str | None = None,
         payload_extras: dict | None = None,
+        event_kind: str | None = None,
+        event_payload: dict | None = None,
     ) -> CronJob:
         # Validate everything before persisting — a bad tz would otherwise
         # leave a half-written row in jobs.json.
@@ -76,6 +81,7 @@ class Scheduler(BaseAgent):
         job = self._store.add_job(
             name=name, kind=kind, schedule=schedule, tz=effective_tz,
             payload=payload, source=source, enabled=True,
+            event_kind=event_kind, event_payload=event_payload,
         )
         self._store.set_state(
             job.id,
@@ -226,7 +232,16 @@ class Scheduler(BaseAgent):
     async def _fire_job(self, job: CronJob) -> None:
         st = self._store.get_state(job.id)
         try:
-            await self._dispatch("general", job.payload)
+            if job.event_kind:
+                from tend.dispatch import dispatch_event
+                await dispatch_event(
+                    kind=job.event_kind,
+                    payload=job.event_payload or {},
+                    dispatch=self._dispatch,
+                    skills_root=self._skills_root,
+                )
+            else:
+                await self._dispatch("general", job.payload)
             new_state = JobState(
                 last_run_at=dt.datetime.now(tz=ZoneInfo("UTC")).isoformat(),
                 last_run_status="succeeded",

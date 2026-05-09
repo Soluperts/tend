@@ -146,6 +146,7 @@ async def _run() -> None:
         dispatch=lambda target, payload: scheduler.request_task(
             target, payload=payload,
         ),
+        skills_root=Path.home() / ".tend" / "skills",
         default_tz=settings.timezone or "UTC",
         missed_at_policy=settings.scheduler.missed_at_policy,
     )
