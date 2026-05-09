@@ -15,6 +15,9 @@ the LLM on whatever LLMContextFrame the bridge delivers.
 
 from __future__ import annotations
 
+from pathlib import Path
+from xml.sax.saxutils import escape as _xml_escape
+
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
@@ -36,12 +39,39 @@ from tend.config import Settings
 VOICE_RULES = (
     "Replies are spoken aloud. Keep them brief — usually one short sentence. "
     "No markdown, no lists, no code blocks. Plain conversational prose only. "
-    "If the user does not appear to be addressing you, stay silent."
+    "If the user does not appear to be addressing you, stay silent. "
+    "When the user requests something matching one of the available-skills "
+    "below, call the do_task tool with the user's verbatim request and give "
+    "a one-sentence acknowledgement. For questions you can't answer from "
+    "your own knowledge (current news, weather, web lookups, anything time-"
+    "sensitive), also call do_task — the worker has internet access and will "
+    "announce the result."
 )
 
 
-def _build_system_prompt(soul_text: str) -> dict:
-    content = soul_text.strip() + "\n\n" + VOICE_RULES
+def _skills_catalog_xml(skills_root: Path | None) -> str:
+    """Compact <available-skills> XML block built from installed SKILL.md
+    files. Empty string if no skills_root or no skills installed."""
+    if skills_root is None:
+        return ""
+    from tend.skills import enumerate_skills
+    skills = enumerate_skills(skills_root)
+    if not skills:
+        return ""
+    parts = ["<available-skills>"]
+    for s in skills:
+        name = _xml_escape(s.name)
+        desc = _xml_escape(s.description.strip())
+        parts.append(f'  <skill name="{name}">{desc}</skill>')
+    parts.append("</available-skills>")
+    return "\n".join(parts)
+
+
+def _build_system_prompt(soul_text: str, skills_xml: str = "") -> dict:
+    sections = [soul_text.strip(), VOICE_RULES]
+    if skills_xml:
+        sections.append(skills_xml)
+    content = "\n\n".join(sections)
     return {"role": "system", "content": content}
 
 
@@ -58,6 +88,7 @@ class Hub(BaseAgent):
         tts: TTSService,
         tts_sample_rate: int,
         brain: BaseAgent,
+        skills_root: Path | None = None,
         announcer=None,
     ):
         super().__init__(name, bus=bus)
@@ -66,6 +97,7 @@ class Hub(BaseAgent):
         self._tts = tts
         self._tts_sample_rate = tts_sample_rate
         self._brain = brain
+        self._skills_root = skills_root
         self._announcer = announcer
         self._context = LLMContext()
 
@@ -85,7 +117,10 @@ class Hub(BaseAgent):
 
     async def reset_session(self, soul_text: str) -> None:
         """Replace the LLMContext's messages with a fresh system prompt only."""
-        self._context.set_messages([_build_system_prompt(soul_text)])
+        skills_xml = _skills_catalog_xml(self._skills_root)
+        self._context.set_messages(
+            [_build_system_prompt(soul_text, skills_xml)],
+        )
 
     async def build_pipeline(self) -> Pipeline:
         transport = LocalAudioTransport(
