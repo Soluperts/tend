@@ -37,3 +37,18 @@ allowed_tools = ["Read", "Edit", "Write", "Bash", "Grep", "Glob"]
 # Persistent workspace where the worker builds and accumulates artifacts.
 # All tasks share this directory — no per-job isolation.
 workspace_dir = "~/.tend/workspace"
+
+[scheduler]
+heartbeat_every = "30m"
+missed_at_policy = "run-on-restart"
+
+[webhook]
+host = "127.0.0.1"
+port = 7331
+
+[announcer]
+default_cooldown_s = 300
+
+[announcer.category]
+posture = 600
+hydration = 900
