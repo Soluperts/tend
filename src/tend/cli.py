@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 
 from tend.sessions import SessionStore
+from tend.skills import enumerate_skills
 
 
 def _default_root() -> Path:
@@ -250,9 +252,9 @@ def cmd_snapshot(args) -> None:
         '  "mcp__google_sheets__*",\n'
         "]\n"
         "```\n\n"
-        "For a coding worker with full tool access:\n\n"
+        "For the general worker with full tool access:\n\n"
         "```toml\n"
-        "[workers.coding]\n"
+        "[workers.general]\n"
         'model = "claude-opus-4-7"\n'
         'setting_sources = "user,project,local"\n'
         'allowed_tools = ["Read", "Edit", "Write", "Bash", "Grep", "Glob", "mcp__*"]\n'
@@ -263,6 +265,109 @@ def cmd_snapshot(args) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(sections))
     print(f"Wrote {out}")
+
+
+def _skills_root() -> Path:
+    """Resolve the skills root, env var first, then ~/.tend/skills."""
+    override = os.environ.get("TEND_SKILLS_ROOT")
+    if override:
+        return Path(override)
+    return Path.home() / ".tend" / "skills"
+
+
+def _skills_quarantine_root() -> Path:
+    """Resolve the quarantine root, env var first, then ~/.tend/skills-quarantined."""
+    override = os.environ.get("TEND_SKILLS_QUARANTINE_ROOT")
+    if override:
+        return Path(override)
+    return Path.home() / ".tend" / "skills-quarantined"
+
+
+def _validate_skill_name(name: str) -> str:
+    """Reject empty, slashes, traversal, or dotfiles. Raises SystemExit on bad input."""
+    if not name or "/" in name or ".." in name or name.startswith("."):
+        raise SystemExit(f"invalid skill name: {name!r}")
+    return name
+
+
+def cmd_skills_list(args) -> int:
+    skills = enumerate_skills(_skills_root())
+    if not skills:
+        print("No skills installed.")
+        return 0
+    for s in skills:
+        print(f"{s.name} — {s.description}")
+    return 0
+
+
+def cmd_skills_show(args) -> int:
+    name = _validate_skill_name(args.name)
+    skill_md = _skills_root() / name / "SKILL.md"
+    if not skill_md.is_file():
+        print(f"No skill named {name!r}", file=sys.stderr)
+        return 2
+    sys.stdout.write(skill_md.read_text(encoding="utf-8"))
+    return 0
+
+
+def cmd_skills_cat(args) -> int:
+    # In v1, cat is an alias for show — both dump the raw SKILL.md.
+    return cmd_skills_show(args)
+
+
+def cmd_skills_rm(args) -> int:
+    name = _validate_skill_name(args.name)
+    target = _skills_root() / name
+    if not target.is_dir():
+        print(f"No skill named {name!r}", file=sys.stderr)
+        return 2
+    shutil.rmtree(target)
+    return 0
+
+
+def cmd_skills_quarantined(args) -> int:
+    root = _skills_quarantine_root()
+    entries = sorted(p for p in root.iterdir() if p.is_dir()) if root.exists() else []
+    if not entries:
+        print("No quarantined skills.")
+        return 0
+    for entry in entries:
+        print(entry.name)
+        findings_path = entry / "_findings.json"
+        if not findings_path.is_file():
+            print("  (no _findings.json)")
+            continue
+        try:
+            findings = json.loads(findings_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"  (could not parse _findings.json: {e})")
+            continue
+        if not findings:
+            print("  (no findings recorded)")
+            continue
+        for f in findings:
+            rule = f.get("rule", "?")
+            severity = f.get("severity", "?")
+            line = f.get("line", "?")
+            snippet = f.get("snippet", "")
+            print(f"  [{severity}] {rule} (line {line}): {snippet}")
+    return 0
+
+
+def cmd_scan_skill(args) -> int:
+    from tend.skills import scan_text
+    name = _validate_skill_name(args.name)
+    p = _skills_root() / name / "SKILL.md"
+    if not p.is_file():
+        print(f"no skill named {name!r}", file=sys.stderr)
+        return 3
+    report = scan_text(p.read_text(encoding="utf-8"))
+    if report.is_clean:
+        print(f"{name}: clean")
+        return 0
+    for f in report.findings:
+        print(f"  [{f.severity}] {f.rule} (line {f.line}): {f.snippet}")
+    return 2 if report.is_critical else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -292,12 +397,32 @@ def build_parser() -> argparse.ArgumentParser:
     psnap = sub.add_parser("snapshot", help="Snapshot the local Claude Code environment.")
     psnap.set_defaults(func=cmd_snapshot)
 
+    scan = sub.add_parser("scan-skill", help="Run the safety scanner over a skill.")
+    scan.add_argument("name")
+    scan.set_defaults(func=cmd_scan_skill)
+
+    skills = sub.add_parser("skills").add_subparsers(dest="action", required=True)
+
+    sk_list = skills.add_parser("list"); sk_list.set_defaults(func=cmd_skills_list)
+
+    sk_show = skills.add_parser("show"); sk_show.set_defaults(func=cmd_skills_show)
+    sk_show.add_argument("name")
+
+    sk_cat = skills.add_parser("cat"); sk_cat.set_defaults(func=cmd_skills_cat)
+    sk_cat.add_argument("name")
+
+    sk_rm = skills.add_parser("rm"); sk_rm.set_defaults(func=cmd_skills_rm)
+    sk_rm.add_argument("name")
+
+    sk_q = skills.add_parser("quarantined"); sk_q.set_defaults(func=cmd_skills_quarantined)
+
     return p
 
 
-def main(argv=None) -> None:
+def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    args.func(args)
+    rc = args.func(args)
+    return rc if isinstance(rc, int) else 0
 
 
 if __name__ == "__main__":

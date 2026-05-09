@@ -27,9 +27,16 @@ class WorkerConfig(BaseModel):
     setting_sources: str = "user"
     allowed_tools: list[str] = []
     mcp_config_path: str | None = None
-    # Coding worker: persistent workspace where claude builds things.
+    # Persistent workspace where the worker builds and accumulates artifacts.
     # Resolved against `~` if it starts with `~`. None → ~/.tend/workspace/.
     workspace_dir: str | None = None
+    # General worker: directory containing skill subdirs (each with a SKILL.md).
+    # Resolved against `~` if it starts with `~`. None → ~/.tend/skills/.
+    # NOTE: skills_dir affects the GeneralWorker only. The voice-side
+    # `list_skills` tool and the `tend skills ...` CLI subcommands look at
+    # TEND_SKILLS_ROOT (env var) or ~/.tend/skills. If you override
+    # skills_dir, set TEND_SKILLS_ROOT to the same value to keep them aligned.
+    skills_dir: str | None = None
 
 
 class Settings(BaseSettings):

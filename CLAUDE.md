@@ -32,7 +32,8 @@ AgentRunner (in-process AsyncQueueBus)
       └── Brain (LLMAgent, bridged=(), starts inactive)
             pipeline: [LLM]   (default LLMAgent.build_pipeline)
             └── Workers (lazy, persistent across wake/sleep)
-                  e.g. ReminderWorker (v1 stub)
+                  e.g. ReminderWorker (v1 stub),
+                       GeneralWorker (skill-driven worker)
 ```
 
 Frame flow on a turn:
@@ -52,6 +53,18 @@ Wake/sleep is *attention*. Day-session is *memory*. They don't interact except t
 
 The framework's `_BusEdgeProcessor` (which wraps every bridged agent) sends outgoing bus frames **without** a bridge name (`pipecat_subagents/agents/base_agent.py:149`). So a named-bridge filter on `BusBridgeProcessor` would orphan Brain's responses — keep the bridge unnamed (no `bridge=` kwarg) and use `bridged=()` on the child. All canonical examples in pipecat-subagents follow this pattern. Use `exclude_frames=` (not bridge names) to keep specific frame types local; we exclude `TTSSpeakFrame` so wake-word acks ("Yes?") don't broadcast to Brain.
 
+### Skills layer
+
+`~/.tend/skills/<name>/SKILL.md` files teach the GeneralWorker how to handle
+recurring requests. At spawn time the worker enumerates the catalog and
+injects compact `<available-skills>` XML into claude's system prompt;
+claude reads the full SKILL.md body via Read on demand. Scripts live in
+`~/.tend/workspace/bin/`. New skills are authored mid-task by claude when
+no existing skill matches; a regex safety scanner gates them, with
+critical findings moved to `~/.tend/skills-quarantined/<name>/` instead of
+being executed. Worker config (model, allowed tools, workspace dir) lives
+under `[workers.general]` in `tend.toml`.
+
 ## Module layout
 
 ```
@@ -61,11 +74,17 @@ src/tend/
     gates.py       OpenWakeWordGate (pre-STT, with cooldown), SleepPhraseGate (post-STT)
     logging.py     Input/OutputLatencyLogger (pass-through, debug only)
   workers/
+    claude_cli.py  ClaudeCliWorker (base — runs `claude` CLI subprocess)
+    general.py     GeneralWorker (skill-driven; replaces former CodingWorker)
     reminder.py    ReminderWorker (v1 stub)
+  skills.py        skill catalog + safety scanner
   brain.py         Brain (thin LLMAgent — build_llm + tools + on_task_update)
   session.py       SessionManager (soul.md, daily reset → Hub.reset_session)
+  sessions.py      SessionStore (per-worker persistent session metadata)
   services.py      STT / TTS / brain LLM factories with preflight + fallback
+  preflight.py     `claude` CLI preflight check
   config.py        Settings (pydantic-settings, TOML + env)
+  cli.py           `tend` CLI subcommands (skills, scan-skill, etc.)
   main.py          AgentRunner setup; entry point
 scripts/
   audio_check.py   Standalone PyAudio mic/speaker sanity probe
@@ -107,11 +126,13 @@ class MyWorker(BaseAgent):
 
 Brain dispatches via `request_task` (fire-and-forget) — never `async with self.task(...)` — so the brain isn't blocked on a tool call when it gets deactivated. Worker handles its own output. Brain's `on_task_update` fires regardless of `Brain.active`; it forwards the announcement to Hub's context as an `LLMMessagesAppendFrame` published on the bus, so the next conversation turn includes what was said while asleep.
 
+GeneralWorker is the v1 reference: one worker handles every dispatch (Brain's `do_task` tool) and gets capability from skills under `~/.tend/skills/`, rather than each capability requiring a new worker class.
+
 ## Deliberate non-choices for v1 (do not "fix" without asking)
 
 - **No compaction** of the day-session context. Resets at the wall-clock boundary instead. Will revisit when context size becomes a real problem.
 - **No persistent memory** across days. Each day starts from `soul.md` alone.
-- **No real workers** beyond the `ReminderWorker` stub. Calendar / research / code / planning are each their own brainstorm → spec → build cycle.
+- **No new worker classes per capability.** Calendar / research / planning worker behavior comes from skills authored on demand under `~/.tend/skills/` and run by the single `GeneralWorker`, not from new worker classes.
 - **No camera / vision.** Audio only.
 - **No multi-user.** Single user, single device, no auth.
 - **No dev "always-awake" bypass.** Architecture is honest; iterate by speaking the wake word.
@@ -149,4 +170,7 @@ Logs: `/tmp/tend.log` (loguru, 5 MB rotation). Faults: `/tmp/tend.faults.log` (f
 
 ## When in doubt
 
-Read the spec: `docs/superpowers/specs/2026-05-05-tend-smart-speaker-design.md`. Read the implementation plan: `docs/superpowers/plans/2026-05-05-tend-v1.md`. If a request conflicts with the principles above, raise it before coding.
+Read the spec: `docs/superpowers/specs/2026-05-05-tend-smart-speaker-design.md`
+and `docs/superpowers/specs/2026-05-07-deskclaw-skills-and-general-worker-design.md`.
+Read the implementation plans: `docs/superpowers/plans/2026-05-05-tend-v1.md` and
+`docs/superpowers/plans/2026-05-07-deskclaw-skills-and-general-worker.md`. If a request conflicts with the principles above, raise it before coding.

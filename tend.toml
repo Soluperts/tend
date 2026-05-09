@@ -30,10 +30,10 @@ soul_path = "soul.md"
 log_path = "tend.log"
 
 # Worker config — see docs/superpowers/specs/2026-05-06-claude-cli-workers-design.md
-[workers.coding]
+[workers.general]
 model = "claude-opus-4-7"
 setting_sources = "user,project,local"
 allowed_tools = ["Read", "Edit", "Write", "Bash", "Grep", "Glob"]
-# Persistent workspace where deskclaw builds things. All coding tasks
-# share this directory — no per-job isolation.
+# Persistent workspace where the worker builds and accumulates artifacts.
+# All tasks share this directory — no per-job isolation.
 workspace_dir = "~/.tend/workspace"
