@@ -37,11 +37,13 @@ class Brain(LLMAgent):
         llm_service: LLMService | None,
         session_manager=None,
         store: SessionStore | None = None,
+        scheduler=None,
     ):
         super().__init__(name, bus=bus, bridged=())
         self._llm_service = llm_service
         self._session_manager = session_manager
         self._store = store
+        self._scheduler = scheduler
 
     def attach_session_manager(self, session_manager) -> None:
         self._session_manager = session_manager
@@ -256,3 +258,73 @@ class Brain(LLMAgent):
             },
         )
         return f"Got it. I'll follow up on session {match.session_id[:8]}."
+
+    @tool
+    async def schedule(
+        self,
+        params: FunctionCallParams,
+        when: str,
+        request: str,
+        name: str | None = None,
+    ):
+        """Schedule a recurring or one-shot job. The worker fires when the
+        schedule matches and announces the result.
+
+        Args:
+            when: cron expression like '0 12 * * *', a relative offset like
+                  'in 3 hours', an ISO timestamp, or 'every 30m'.
+            request: what should happen, in plain English.
+            name: optional human label for cancel/list later.
+        """
+        if self._scheduler is None:
+            await params.result_callback("Scheduler not configured.")
+            return
+        from tend.cron_time import InvalidWhen
+        try:
+            job = self._scheduler.add_job(
+                when=when, request=request,
+                name=name or f"job-{int(__import__('time').time())}",
+                source="voice",
+            )
+        except InvalidWhen as e:
+            await params.result_callback(
+                f"I couldn't parse that schedule: {e}. Try '0 12 * * *' "
+                f"for cron, 'in 30 minutes' for one-shot, or 'every 30m'."
+            )
+            return
+        await params.result_callback(
+            f"Scheduled '{job.name}'."
+        )
+
+    @tool
+    async def list_schedules(self, params: FunctionCallParams):
+        """List currently active schedules and what they'll do."""
+        if self._scheduler is None:
+            await params.result_callback("Scheduler not configured.")
+            return
+        jobs = self._scheduler.list_jobs()
+        if not jobs:
+            await params.result_callback("You have no active schedules.")
+            return
+        lines = []
+        for j in jobs:
+            kind = j.kind
+            sched = j.schedule
+            lines.append(f"{j.name}: {kind} {sched} ({j.source})")
+        await params.result_callback("\n".join(lines))
+
+    @tool
+    async def cancel_schedule(
+        self, params: FunctionCallParams, name_or_id: str,
+    ):
+        """Cancel a scheduled job by name or id prefix."""
+        if self._scheduler is None:
+            await params.result_callback("Scheduler not configured.")
+            return
+        ok = self._scheduler.cancel_job(name_or_id)
+        if ok:
+            await params.result_callback(f"Cancelled '{name_or_id}'.")
+        else:
+            await params.result_callback(
+                f"Couldn't find a schedule matching '{name_or_id}'."
+            )
