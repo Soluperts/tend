@@ -29,27 +29,46 @@ in the tend calendar.
      (e.g. `[exercise]`, `[lunch]`, `[deep-work]`, `[break]`).
    - Build an RRULE based on the requested days.
    - **Check conflicts:** for each day in the next two weeks where this
-     block would land, run:
+     block would land, query the user's primary calendar in that
+     time window:
 
      ```bash
-     bash ~/.tend/workspace/bin/gws-agenda.sh \
-       --time-min <day-start> --time-max <day-end> --json
+     bash ~/.tend/workspace/bin/gws-events-window.sh \
+       --calendar primary \
+       --time-min <day-start-iso> --time-max <day-end-iso> --json
      ```
 
-     Filter to events on the user's primary calendar that overlap. If
-     any, surface them: "Tuesday morning has a 9am meeting; skip that
-     day or pick another time?"
+     The output is `{"items": [...]}` from the Calendar events.list
+     API. Filter to entries that overlap the proposed block. If any,
+     surface them: "Tuesday morning has a 9am meeting; skip that day
+     or pick another time?"
 
-   - On confirm, insert the recurring event:
+   - On confirm, insert the recurring event. Note: `gws calendar
+     +insert` does not accept `--recurrence`; for recurring events use
+     the resource-style call with a body that includes a `recurrence`
+     array:
+
+     ```bash
+     CAL_ID="$(cat ~/.tend/google/tend-calendar-id)"
+     gws calendar events insert \
+       --params "$(python3 -c 'import json; print(json.dumps({"calendarId": "'"$CAL_ID"'"}))')" \
+       --json '{
+         "summary": "[exercise]",
+         "start": {"dateTime": "<first-occurrence-iso>"},
+         "end":   {"dateTime": "<first-occurrence-end-iso>"},
+         "recurrence": ["RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"]
+       }' --format json
+     ```
+
+     For a one-off (non-recurring) event the simpler helper works:
 
      ```bash
      gws calendar +insert \
-       --calendar "$(cat ~/.tend/google/tend-calendar-id)" \
+       --calendar "$CAL_ID" \
        --summary "[exercise]" \
        --start "<first-occurrence-iso>" \
        --end "<first-occurrence-end-iso>" \
-       --recurrence "RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR" \
-       --json
+       --format json
      ```
 
 4. **Spoken summary** at the end (one sentence):

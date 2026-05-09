@@ -4,7 +4,9 @@
 # Usage:
 #   gws-find-slot.sh --day 2026-05-09 --window morning --duration 60 --json
 #
-# Reads watched calendars from tend.toml; returns largest contiguous free slot.
+# Queries the user's primary calendar over the specified day-window and
+# returns up to three free slots that meet the duration requirement,
+# sorted longest-first.
 
 set -euo pipefail
 
@@ -28,17 +30,18 @@ case "$window" in
     *) echo "window must be morning|afternoon|evening" >&2; exit 2 ;;
 esac
 
-# Pull events for the day from the primary calendar (gws default).
-events_json="$(gws calendar +agenda \
-    --time-min "${day}T${start_h}:00:00+00:00" \
-    --time-max "${day}T${end_h}:00:00+00:00" \
-    --json)"
+time_min="${day}T$(printf '%02d' "$start_h"):00:00+00:00"
+time_max="${day}T$(printf '%02d' "$end_h"):00:00+00:00"
 
-# Largest free slot calculation: emit the day window minus any overlaps.
-# For v1, use a simple python helper. (jq alone gets unwieldy.)
+# Pull events on the primary calendar over the window. events.list
+# returns {"items": [...]} so the python helper unwraps it.
+params="$(python3 -c "import json,sys; print(json.dumps({'calendarId': 'primary', 'timeMin': sys.argv[1], 'timeMax': sys.argv[2], 'singleEvents': True, 'orderBy': 'startTime'}))" "$time_min" "$time_max")"
+events_json="$(gws calendar events list --params "$params" --format json)"
+
 python3 - "$events_json" "$day" "$start_h" "$end_h" "$duration" <<'PY'
 import json, sys
-events = json.loads(sys.argv[1])
+raw = json.loads(sys.argv[1])
+events = raw.get("items", []) if isinstance(raw, dict) else raw
 day = sys.argv[2]
 sh = int(sys.argv[3])
 eh = int(sys.argv[4])

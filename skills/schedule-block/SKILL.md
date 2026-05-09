@@ -29,15 +29,17 @@ Add a single event to the tend calendar.
    Pick the largest free slot returned. Propose to the user:
    "Tomorrow 9-11am is open, sound good?"
 
-4. **Conflict-check exact times** before writing:
+4. **Conflict-check exact times** before writing — query the user's
+   primary calendar within that window:
 
    ```bash
-   bash ~/.tend/workspace/bin/gws-agenda.sh \
+   bash ~/.tend/workspace/bin/gws-events-window.sh \
+     --calendar primary \
      --time-min <iso-start> --time-max <iso-end> --json
    ```
 
-   If the user's primary calendar has any overlap, surface it and ask
-   if they want to proceed anyway.
+   The output is `{"items": [...]}`. If any item overlaps the
+   proposed block, surface it and ask whether to proceed anyway.
 
 5. **On user confirm**, insert the event:
 
@@ -47,7 +49,7 @@ Add a single event to the tend calendar.
      --summary "[<tag>]" \
      --start "<iso-start>" \
      --end "<iso-end>" \
-     --json
+     --format json
    ```
 
 6. **Spoken summary**: "Added [tag] from <start> to <end>."
