@@ -32,6 +32,7 @@ from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransp
 from pipecat_subagents.agents import BaseAgent
 from pipecat_subagents.bus import AgentBus, BusBridgeProcessor
 
+from tend.audio.channels import StereoToMonoLeft
 from tend.audio.gates import OpenWakeWordGate, SleepPhraseGate
 from tend.audio.logging import InputLatencyLogger, OutputLatencyLogger
 from tend.config import Settings
@@ -128,6 +129,7 @@ class Hub(BaseAgent):
                 audio_in_enabled=True,
                 audio_out_enabled=True,
                 audio_in_sample_rate=self._settings.sample_rate,
+                audio_in_channels=2,  # XVF3800: L=AEC-processed, R=echo ref
                 audio_out_sample_rate=self._tts_sample_rate,
             )
         )
@@ -146,6 +148,7 @@ class Hub(BaseAgent):
 
         return Pipeline([
             transport.input(),
+            StereoToMonoLeft(),
             VADProcessor(vad_analyzer=SileroVADAnalyzer()),
             OpenWakeWordGate(
                 model_name=self._settings.openwakeword_model,
