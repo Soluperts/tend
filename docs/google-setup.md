@@ -97,6 +97,21 @@ Speak the wake word, then:
 - "Morning briefing." — should describe today's events + inbox state.
 - "Set up my daily routine." — walks you through routine-setup.
 
+## 9. Enable the schedule-watcher trigger
+
+The schedule-watcher skill is installed but its `every 15m` trigger is
+inert until you explicitly enable it. Speak the wake word, then say:
+
+> "Enable triggers for schedule watcher."
+
+Or, equivalently, while tend is stopped, edit `~/.tend/cron/jobs.json`
+to add the trigger directly. After enabling, the watcher will tick
+every 15 minutes and react to bracket-tagged events on watched
+calendars.
+
+Verify with `tend schedule list` — you should see a `skill:schedule-watcher`
+source row.
+
 ## Smoke checks
 
 ```bash

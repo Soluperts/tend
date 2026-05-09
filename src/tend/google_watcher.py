@@ -167,6 +167,7 @@ def _schedule_add_event(
         "--event", event_kind,
         "--payload", json.dumps(event_payload),
         "--name", job_name,
+        "--source", "schedule-watcher",
     ]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=10, check=False)
     if r.returncode != 0:

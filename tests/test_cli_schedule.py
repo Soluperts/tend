@@ -117,3 +117,21 @@ def test_schedule_add_event_and_request_mutually_exclusive(
     assert rc == 2
     err = capsys.readouterr().err
     assert "mutually exclusive" in err.lower() or "not allowed" in err.lower()
+
+
+def test_schedule_add_custom_source(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("TEND_ROOT", str(tmp_path))
+    from tend.cli import main as cli_main
+    from tend.cron_store import CronStore
+
+    rc = cli_main([
+        "schedule", "add",
+        "--when", "in 1m",
+        "--request", "test",
+        "--name", "x",
+        "--source", "schedule-watcher",
+    ])
+    assert rc == 0
+    rows = CronStore(root=tmp_path).load_jobs()
+    assert len(rows) == 1
+    assert rows[0].source == "schedule-watcher"

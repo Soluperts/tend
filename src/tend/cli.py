@@ -537,7 +537,7 @@ def cmd_schedule_add(args) -> int:
         name=args.name, kind=kind, schedule=schedule,
         tz=args.tz or "UTC",
         payload=payload,
-        source="cli", enabled=True,
+        source=args.source, enabled=True,
         event_kind=args.event,
         event_payload=event_payload,
     )
@@ -810,6 +810,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Event kind to dispatch (e.g. lunch.upcoming). Requires --payload.")
     sa.add_argument("--payload", default=None,
                     help="JSON payload for --event mode.")
+    sa.add_argument("--source", default="cli",
+                    help="Source label for the schedule entry (default: cli).")
     sa.set_defaults(func=cmd_schedule_add)
 
     sr = sched.add_parser("rm", help="Remove a schedule by name or id prefix.")
