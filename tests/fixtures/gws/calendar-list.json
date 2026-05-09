@@ -1,5 +1,7 @@
-[
-  {"id": "tend-cal-id-001", "summary": "tend"},
-  {"id": "primary-cal-id", "summary": "primary"},
-  {"id": "personal-cal-id", "summary": "Personal"}
-]
+{
+  "items": [
+    {"id": "tend-cal-id-001", "summary": "tend"},
+    {"id": "primary-cal-id", "summary": "primary"},
+    {"id": "personal-cal-id", "summary": "Personal"}
+  ]
+}

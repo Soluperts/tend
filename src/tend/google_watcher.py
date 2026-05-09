@@ -104,45 +104,69 @@ def prune_state(state: dict, *, now: dt.datetime) -> dict:
 
 def _gws_calendar_list() -> list[dict]:
     r = subprocess.run(
-        ["gws", "calendar", "list", "--json"],
+        ["gws", "calendar", "calendarList", "list", "--format", "json"],
         capture_output=True, text=True, timeout=15, check=False,
     )
     if r.returncode != 0:
-        logger.warning(f"gws calendar list failed: {r.stderr}")
+        logger.warning(f"gws calendarList list failed: {r.stderr}")
         return []
     try:
-        return json.loads(r.stdout)
+        data = json.loads(r.stdout)
     except json.JSONDecodeError:
         return []
+    return data.get("items", []) if isinstance(data, dict) else []
 
 
 def _gws_agenda(calendar_id: str, time_min: str, time_max: str) -> list[dict]:
+    params = json.dumps({
+        "calendarId": calendar_id,
+        "timeMin": time_min,
+        "timeMax": time_max,
+        "singleEvents": True,
+        "orderBy": "startTime",
+    })
     r = subprocess.run(
-        ["gws", "calendar", "+agenda",
-         "--calendar", calendar_id,
-         "--time-min", time_min,
-         "--time-max", time_max,
-         "--json"],
+        ["gws", "calendar", "events", "list",
+         "--params", params,
+         "--format", "json"],
         capture_output=True, text=True, timeout=20, check=False,
     )
     if r.returncode != 0:
         logger.warning(
-            f"gws agenda failed for {calendar_id}: {r.stderr}",
+            f"gws events list failed for {calendar_id}: {r.stderr}",
         )
         return []
     try:
-        return json.loads(r.stdout)
+        data = json.loads(r.stdout)
     except json.JSONDecodeError:
         return []
+    return data.get("items", []) if isinstance(data, dict) else []
 
 
 def _resolve_watched_ids(names: list[str]) -> list[tuple[str, str]]:
     """Resolve watched calendar names to (name, id) tuples. Skips names
-    that don't resolve."""
+    that don't resolve.
+
+    The literal name "primary" matches the calendarList entry with
+    ``primary: true`` (Google represents primary as the user's email
+    address in the summary field, so a plain summary lookup misses it).
+    Plain calendar IDs (anything containing "@") pass through verbatim.
+    """
     cals = _gws_calendar_list()
     by_summary = {c.get("summary", "").lower(): c.get("id") for c in cals}
+    primary_id = next(
+        (c.get("id") for c in cals if c.get("primary")),
+        None,
+    )
     out: list[tuple[str, str]] = []
     for name in names:
+        if "@" in name:
+            # Already a calendar ID — pass through.
+            out.append((name, name))
+            continue
+        if name.lower() == "primary" and primary_id is not None:
+            out.append((name, primary_id))
+            continue
         cid = by_summary.get(name.lower())
         if cid is None:
             logger.warning(f"watched_calendar {name!r} not found in gws list")

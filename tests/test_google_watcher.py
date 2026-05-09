@@ -151,14 +151,13 @@ async def test_run_tick_schedules_unfired_phases(tmp_path, monkeypatch):
         # Two cases: gws calls return JSON; tend schedule add returns success.
         result = MagicMock()
         result.returncode = 0
-        if cmd[:2] == ["gws", "calendar"] and "list" in cmd:
+        if cmd[:4] == ["gws", "calendar", "calendarList", "list"]:
             result.stdout = _load_fixture("calendar-list.json")
-        elif cmd[:2] == ["gws", "calendar"] and "+agenda" in cmd:
-            # First watched calendar: return the agenda fixture.
-            # Second (and further) watched calendars: return empty.
-            cal_arg_idx = cmd.index("--calendar") + 1
-            cal_id = cmd[cal_arg_idx]
-            if cal_id == "tend-cal-id-001":
+        elif cmd[:4] == ["gws", "calendar", "events", "list"]:
+            # The calendarId is inside the --params JSON blob.
+            params_idx = cmd.index("--params") + 1
+            params = json.loads(cmd[params_idx])
+            if params.get("calendarId") == "tend-cal-id-001":
                 result.stdout = _load_fixture("agenda.json")
             else:
                 result.stdout = _load_fixture("empty-agenda.json")
@@ -230,20 +229,21 @@ async def test_run_tick_dedups_already_fired_phases(tmp_path, monkeypatch):
     def fake_run_subprocess(cmd, **kwargs):
         result = MagicMock()
         result.returncode = 0
-        if cmd[:2] == ["gws", "calendar"] and "list" in cmd:
+        if cmd[:4] == ["gws", "calendar", "calendarList", "list"]:
             result.stdout = _load_fixture("calendar-list.json")
-        elif cmd[:2] == ["gws", "calendar"] and "+agenda" in cmd:
-            cal_arg_idx = cmd.index("--calendar") + 1
-            if cmd[cal_arg_idx] == "tend-cal-id-001":
-                result.stdout = json.dumps([{
+        elif cmd[:4] == ["gws", "calendar", "events", "list"]:
+            params_idx = cmd.index("--params") + 1
+            params = json.loads(cmd[params_idx])
+            if params.get("calendarId") == "tend-cal-id-001":
+                result.stdout = json.dumps({"items": [{
                     "id": "evt-1",
                     "summary": "[lunch] with kids",
                     "start": {"dateTime": "2026-05-09T12:00:00+00:00"},
                     "end": {"dateTime": "2026-05-09T13:00:00+00:00"},
                     "updated": "2026-05-08T20:00:00+00:00",
-                }])
+                }]})
             else:
-                result.stdout = "[]"
+                result.stdout = '{"items": []}'
         elif cmd[:2] == ["tend", "schedule"]:
             schedule_calls.append(cmd)
             result.stdout = "added"
@@ -291,21 +291,22 @@ async def test_run_tick_resets_fired_phases_when_event_was_edited(
     def fake_run_subprocess(cmd, **kwargs):
         result = MagicMock()
         result.returncode = 0
-        if cmd[:2] == ["gws", "calendar"] and "list" in cmd:
+        if cmd[:4] == ["gws", "calendar", "calendarList", "list"]:
             result.stdout = _load_fixture("calendar-list.json")
-        elif cmd[:2] == ["gws", "calendar"] and "+agenda" in cmd:
-            cal_arg_idx = cmd.index("--calendar") + 1
-            if cmd[cal_arg_idx] == "tend-cal-id-001":
+        elif cmd[:4] == ["gws", "calendar", "events", "list"]:
+            params_idx = cmd.index("--params") + 1
+            params = json.loads(cmd[params_idx])
+            if params.get("calendarId") == "tend-cal-id-001":
                 # Return the event with a NEW updated value, simulating an edit.
-                result.stdout = json.dumps([{
+                result.stdout = json.dumps({"items": [{
                     "id": "evt-1",
                     "summary": "[lunch] with kids",
                     "start": {"dateTime": "2026-05-09T12:00:00+00:00"},
                     "end": {"dateTime": "2026-05-09T13:00:00+00:00"},
                     "updated": "NEW-UPDATED-TIMESTAMP",
-                }])
+                }]})
             else:
-                result.stdout = "[]"
+                result.stdout = '{"items": []}'
         elif cmd[:2] == ["tend", "schedule"]:
             schedule_calls.append(cmd)
             result.stdout = "added"
