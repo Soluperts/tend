@@ -16,7 +16,7 @@ from typing import Awaitable, Callable
 from aiohttp import web
 from loguru import logger
 
-from tend.skills import find_event_subscribers
+from tend.dispatch import dispatch_event
 
 
 def build_app(
@@ -66,20 +66,12 @@ def build_app(
             return web.json_response(
                 {"error": "missing 'kind' field"}, status=400,
             )
-        try:
-            matches = find_event_subscribers(skills_root, kind)
-        except Exception:
-            logger.exception("event dispatch failed listing subscribers")
-            matches = []
-        for skill in matches:
-            await dispatch("general", {
-                "request": f"Handle event {kind}",
-                "skill": skill.name,
-                "event": body,
-            })
-        return web.json_response(
-            {"dispatched": [s.name for s in matches]},
+        payload = {k: v for k, v in body.items() if k != "kind"}
+        names = await dispatch_event(
+            kind=kind, payload=payload,
+            dispatch=dispatch, skills_root=skills_root,
         )
+        return web.json_response({"dispatched": names})
 
     app = web.Application(middlewares=[auth_middleware])
     app.router.add_post("/say", handle_say)
