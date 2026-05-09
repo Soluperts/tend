@@ -219,6 +219,7 @@ async def run_tick(
 
     watched = _resolve_watched_ids(watched_names)
     if not watched:
+        save_state(state_path, state)
         return {"scheduled": 0, "seen_tagged": 0, "missed_fired": 0}
 
     time_min = now.isoformat()

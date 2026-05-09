@@ -266,3 +266,71 @@ async def test_run_tick_dedups_already_fired_phases(tmp_path, monkeypatch):
     )
     assert len(schedule_calls) == 0  # all phases already fired
     assert summary["scheduled"] == 0
+
+
+async def test_run_tick_resets_fired_phases_when_event_was_edited(
+    tmp_path, monkeypatch,
+):
+    """If the event's `updated` field changes, fired_phases must reset
+    so the user gets phase-firings again on the new schedule."""
+    import json
+    from unittest.mock import MagicMock
+    from tend.google_watcher import run_tick
+
+    state_path = tmp_path / "state.json"
+    # Pre-populate with the OLD updated value and both phases fired.
+    state_path.write_text(json.dumps({
+        "evt-1": {
+            "updated": "OLD-UPDATED-TIMESTAMP",
+            "fired_phases": ["upcoming", "starting"],
+            "end_at": "2026-05-09T13:00:00+00:00",
+        },
+    }))
+    schedule_calls: list[list[str]] = []
+
+    def fake_run_subprocess(cmd, **kwargs):
+        result = MagicMock()
+        result.returncode = 0
+        if cmd[:2] == ["gws", "calendar"] and "list" in cmd:
+            result.stdout = _load_fixture("calendar-list.json")
+        elif cmd[:2] == ["gws", "calendar"] and "+agenda" in cmd:
+            cal_arg_idx = cmd.index("--calendar") + 1
+            if cmd[cal_arg_idx] == "tend-cal-id-001":
+                # Return the event with a NEW updated value, simulating an edit.
+                result.stdout = json.dumps([{
+                    "id": "evt-1",
+                    "summary": "[lunch] with kids",
+                    "start": {"dateTime": "2026-05-09T12:00:00+00:00"},
+                    "end": {"dateTime": "2026-05-09T13:00:00+00:00"},
+                    "updated": "NEW-UPDATED-TIMESTAMP",
+                }])
+            else:
+                result.stdout = "[]"
+        elif cmd[:2] == ["tend", "schedule"]:
+            schedule_calls.append(cmd)
+            result.stdout = "added"
+        return result
+
+    monkeypatch.setattr(
+        "tend.google_watcher.subprocess.run", fake_run_subprocess,
+    )
+    now = dt.datetime(2026, 5, 9, 6, 0, tzinfo=UTC)
+
+    summary = await run_tick(
+        watched_names=["tend"],
+        events_config={
+            "lunch": {"upcoming_lead_s": 3600, "emit": ["upcoming", "starting"]},
+        },
+        state_path=state_path,
+        webhook_token="t",
+        webhook_url="http://127.0.0.1:7331/event",
+        now=now,
+    )
+
+    # Both phases should re-schedule since fired_phases was reset.
+    assert len(schedule_calls) == 2
+    assert summary["scheduled"] == 2
+    # State file should now have the NEW updated timestamp + the re-fired phases.
+    state = json.loads(state_path.read_text())
+    assert state["evt-1"]["updated"] == "NEW-UPDATED-TIMESTAMP"
+    assert sorted(state["evt-1"]["fired_phases"]) == ["starting", "upcoming"]
