@@ -1,7 +1,12 @@
-"""Tend CLI — read-only inspection of worker sessions.
+"""Tend CLI — inspect on-disk state of the tend voice assistant.
 
-`tend sessions list/show/tail/cat` reads the on-disk SessionStore. Runs as
-a separate process from the daemon; no IPC.
+Subcommands:
+- `tend sessions ...` — read worker session history from ~/.tend/sessions/.
+- `tend skills ...` — list / show / remove installed skills under ~/.tend/skills/.
+- `tend scan-skill <name>` — run the safety scanner over a skill.
+- `tend snapshot` — record the local Claude Code environment to ~/.tend/claude-env.md.
+
+Runs as a separate process from the daemon; no IPC.
 """
 
 from __future__ import annotations
@@ -370,51 +375,200 @@ def cmd_scan_skill(args) -> int:
     return 2 if report.is_critical else 1
 
 
+_TOP_EPILOG = """\
+Environment variables:
+  TEND_SKILLS_ROOT             Override skills root (default: ~/.tend/skills)
+  TEND_SKILLS_QUARANTINE_ROOT  Override quarantine root
+                               (default: ~/.tend/skills-quarantined)
+
+Run `tend <command> --help` for command-specific options.
+"""
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="tend")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    p = argparse.ArgumentParser(
+        prog="tend",
+        description=(
+            "tend — inspect and manage the on-disk state of the tend voice "
+            "assistant. Reads ~/.tend/ directly; does not talk to the running "
+            "daemon."
+        ),
+        epilog=_TOP_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = p.add_subparsers(
+        dest="cmd",
+        required=True,
+        title="commands",
+        metavar="<command>",
+    )
 
-    sessions = sub.add_parser("sessions").add_subparsers(dest="action", required=True)
+    # sessions ---------------------------------------------------------------
+    sessions_p = sub.add_parser(
+        "sessions",
+        help="Inspect worker session history (read-only).",
+        description=(
+            "Read-only inspection of worker sessions stored under "
+            "~/.tend/sessions/. A session is one claude-CLI subprocess run "
+            "dispatched by the brain."
+        ),
+    )
+    sessions = sessions_p.add_subparsers(
+        dest="action", required=True, title="actions", metavar="<action>",
+    )
 
-    pl = sessions.add_parser("list"); pl.set_defaults(func=cmd_sessions_list)
-    pl.add_argument("--limit", type=int, default=10)
-    pl.add_argument("--status", choices=["running", "done", "failed", "killed"])
-    pl.add_argument("--json", action="store_true")
+    pl = sessions.add_parser(
+        "list",
+        help="List recent sessions, newest first.",
+        description="List recent worker sessions as a table (or JSON).",
+    )
+    pl.set_defaults(func=cmd_sessions_list)
+    pl.add_argument(
+        "--limit", type=int, default=10,
+        help="Maximum sessions to show (default: 10).",
+    )
+    pl.add_argument(
+        "--status", choices=["running", "done", "failed", "killed"],
+        help="Only show sessions with this status.",
+    )
+    pl.add_argument(
+        "--json", action="store_true",
+        help="Emit JSON instead of a table.",
+    )
 
-    ps = sessions.add_parser("show"); ps.set_defaults(func=cmd_sessions_show)
-    ps.add_argument("session_id")
-    ps.add_argument("--json", action="store_true")
+    ps = sessions.add_parser(
+        "show",
+        help="Show metadata for a single session.",
+        description=(
+            "Print stored metadata (worker, status, request, timestamps, "
+            "transcript path) for one session."
+        ),
+    )
+    ps.set_defaults(func=cmd_sessions_show)
+    ps.add_argument(
+        "session_id", help="Session id, or any unique prefix of one.",
+    )
+    ps.add_argument(
+        "--json", action="store_true",
+        help="Emit JSON instead of key/value lines.",
+    )
 
-    pt = sessions.add_parser("tail"); pt.set_defaults(func=cmd_sessions_tail)
-    pt.add_argument("session_id")
-    pt.add_argument("--follow", action="store_true")
-    pt.add_argument("--raw", action="store_true",
-                    help="Print raw JSONL instead of pretty-printed events")
+    pt = sessions.add_parser(
+        "tail",
+        help="Pretty-print a session's transcript event by event.",
+        description=(
+            "Walk the session's claude-CLI JSONL transcript and pretty-print "
+            "each event. Pair with --follow to stream a running session."
+        ),
+    )
+    pt.set_defaults(func=cmd_sessions_tail)
+    pt.add_argument(
+        "session_id", help="Session id, or any unique prefix of one.",
+    )
+    pt.add_argument(
+        "--follow", action="store_true",
+        help="Stream new events as they arrive (like `tail -f`).",
+    )
+    pt.add_argument(
+        "--raw", action="store_true",
+        help="Print raw JSONL lines instead of pretty-printed events.",
+    )
 
-    pc = sessions.add_parser("cat"); pc.set_defaults(func=cmd_sessions_cat)
-    pc.add_argument("session_id")
+    pc = sessions.add_parser(
+        "cat",
+        help="Dump a session's transcript file to stdout.",
+        description="Write the raw JSONL transcript file to stdout.",
+    )
+    pc.set_defaults(func=cmd_sessions_cat)
+    pc.add_argument(
+        "session_id", help="Session id, or any unique prefix of one.",
+    )
 
-    psnap = sub.add_parser("snapshot", help="Snapshot the local Claude Code environment.")
+    # snapshot ---------------------------------------------------------------
+    psnap = sub.add_parser(
+        "snapshot",
+        help="Snapshot the local Claude Code environment.",
+        description=(
+            "Probe the local `claude` CLI (version, MCP servers, skills, "
+            "agents, commands) and write a markdown summary to "
+            "~/.tend/claude-env.md."
+        ),
+    )
     psnap.set_defaults(func=cmd_snapshot)
 
-    scan = sub.add_parser("scan-skill", help="Run the safety scanner over a skill.")
-    scan.add_argument("name")
+    # scan-skill -------------------------------------------------------------
+    scan = sub.add_parser(
+        "scan-skill",
+        help="Run the safety scanner over an installed skill.",
+        description=(
+            "Read ~/.tend/skills/<name>/SKILL.md and run the regex safety "
+            "scanner over it. Exit codes: 0=clean, 1=warnings only, "
+            "2=critical findings (block), 3=skill not found."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    scan.add_argument(
+        "name", help="Skill name (folder under ~/.tend/skills/).",
+    )
     scan.set_defaults(func=cmd_scan_skill)
 
-    skills = sub.add_parser("skills").add_subparsers(dest="action", required=True)
+    # skills -----------------------------------------------------------------
+    skills_p = sub.add_parser(
+        "skills",
+        help="List, inspect, and remove installed skills.",
+        description=(
+            "Manage user-authored skills under ~/.tend/skills/. Skills are "
+            "markdown SKILL.md files claude reads on demand to follow a "
+            "recurring workflow."
+        ),
+    )
+    skills = skills_p.add_subparsers(
+        dest="action", required=True, title="actions", metavar="<action>",
+    )
 
-    sk_list = skills.add_parser("list"); sk_list.set_defaults(func=cmd_skills_list)
+    sk_list = skills.add_parser(
+        "list",
+        help="List installed skills with their descriptions.",
+        description="One line per skill: `<name> — <description>`.",
+    )
+    sk_list.set_defaults(func=cmd_skills_list)
 
-    sk_show = skills.add_parser("show"); sk_show.set_defaults(func=cmd_skills_show)
-    sk_show.add_argument("name")
+    sk_show = skills.add_parser(
+        "show",
+        help="Print a skill's SKILL.md to stdout.",
+        description="Dump the full SKILL.md (frontmatter + body) for one skill.",
+    )
+    sk_show.set_defaults(func=cmd_skills_show)
+    sk_show.add_argument("name", help="Skill name (folder under ~/.tend/skills/).")
 
-    sk_cat = skills.add_parser("cat"); sk_cat.set_defaults(func=cmd_skills_cat)
-    sk_cat.add_argument("name")
+    sk_cat = skills.add_parser(
+        "cat",
+        help="Alias for `skills show`.",
+        description="Same as `tend skills show`. Kept for muscle memory.",
+    )
+    sk_cat.set_defaults(func=cmd_skills_cat)
+    sk_cat.add_argument("name", help="Skill name (folder under ~/.tend/skills/).")
 
-    sk_rm = skills.add_parser("rm"); sk_rm.set_defaults(func=cmd_skills_rm)
-    sk_rm.add_argument("name")
+    sk_rm = skills.add_parser(
+        "rm",
+        help="Delete an installed skill (irreversible).",
+        description=(
+            "Remove ~/.tend/skills/<name>/ and everything inside it. "
+            "Does not touch quarantined skills."
+        ),
+    )
+    sk_rm.set_defaults(func=cmd_skills_rm)
+    sk_rm.add_argument("name", help="Skill name (folder under ~/.tend/skills/).")
 
-    sk_q = skills.add_parser("quarantined"); sk_q.set_defaults(func=cmd_skills_quarantined)
+    sk_q = skills.add_parser(
+        "quarantined",
+        help="List skills the safety scanner blocked.",
+        description=(
+            "List entries under ~/.tend/skills-quarantined/ along with the "
+            "scanner findings recorded in each entry's _findings.json."
+        ),
+    )
+    sk_q.set_defaults(func=cmd_skills_quarantined)
 
     return p
 
