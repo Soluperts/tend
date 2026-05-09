@@ -8,9 +8,9 @@ from __future__ import annotations
 import datetime as dt
 import re
 from typing import Literal
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from croniter import croniter
+from croniter import croniter, CroniterError
 
 
 Kind = Literal["at", "cron", "every"]
@@ -30,7 +30,10 @@ def _duration_seconds(s: str) -> int:
     m = _DURATION_RE.match(s)
     if not m:
         raise InvalidWhen(f"invalid duration: {s!r}")
-    return int(m.group(1)) * _DURATION_TO_SECONDS[m.group(2)]
+    duration = int(m.group(1))
+    if duration == 0:
+        raise InvalidWhen(f"duration must be > 0: {s!r}")
+    return duration * _DURATION_TO_SECONDS[m.group(2)]
 
 
 def parse_when(when: str) -> tuple[Kind, str]:
@@ -46,7 +49,10 @@ def parse_when(when: str) -> tuple[Kind, str]:
 
     m = _RELATIVE_RE.match(s)
     if m:
-        seconds = int(m.group(1)) * _DURATION_TO_SECONDS[m.group(2).lower()]
+        duration = int(m.group(1))
+        if duration == 0:
+            raise InvalidWhen(f"relative offset must be > 0: {when!r}")
+        seconds = duration * _DURATION_TO_SECONDS[m.group(2).lower()]
         target = dt.datetime.now(tz=ZoneInfo("UTC")) + dt.timedelta(seconds=seconds)
         return "at", target.isoformat()
 
@@ -69,7 +75,7 @@ def parse_when(when: str) -> tuple[Kind, str]:
     try:
         croniter(s)  # raises if invalid
         return "cron", s
-    except Exception as e:
+    except (ValueError, KeyError, TypeError, CroniterError) as e:
         raise InvalidWhen(f"unrecognised when string: {when!r}") from e
 
 
@@ -88,7 +94,12 @@ def next_fire_at(
         seconds = _duration_seconds(schedule)
         return after + dt.timedelta(seconds=seconds)
     if kind == "cron":
-        zone = ZoneInfo(tz) if tz else after.tzinfo
+        if tz is None and after.tzinfo is None:
+            raise InvalidWhen("cron schedule needs an explicit tz or an aware 'after' datetime")
+        try:
+            zone = ZoneInfo(tz) if tz else after.tzinfo
+        except ZoneInfoNotFoundError:
+            raise InvalidWhen(f"unknown timezone: {tz!r}")
         base = after.astimezone(zone) if zone else after
         c = croniter(schedule, base)
         return c.get_next(dt.datetime)

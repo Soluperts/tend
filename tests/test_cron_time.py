@@ -64,11 +64,17 @@ def test_parse_when_every_hours():
     assert schedule == "6h"
 
 
-def test_parse_when_invalid_raises():
+def test_parse_when_invalid_nonsense():
     with pytest.raises(InvalidWhen):
         parse_when("nonsense")
+
+
+def test_parse_when_invalid_lone_in():
     with pytest.raises(InvalidWhen):
         parse_when("in")
+
+
+def test_parse_when_invalid_every_banana():
     with pytest.raises(InvalidWhen):
         parse_when("every banana")
 
@@ -95,3 +101,29 @@ def test_next_fire_at_at_returns_schedule():
     now = dt.datetime(2026, 5, 8, 11, 0, 0, tzinfo=UTC)
     fire = next_fire_at("at", "2026-05-08T12:00:00+00:00", None, now)
     assert fire == dt.datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
+
+
+def test_parse_when_zero_duration_relative_rejected():
+    with pytest.raises(InvalidWhen):
+        parse_when("in 0s")
+    with pytest.raises(InvalidWhen):
+        parse_when("in 0m")
+
+
+def test_parse_when_zero_duration_every_rejected():
+    with pytest.raises(InvalidWhen):
+        parse_when("every 0s")
+    with pytest.raises(InvalidWhen):
+        parse_when("every 0h")
+
+
+def test_next_fire_at_cron_requires_aware_time():
+    naive = dt.datetime(2026, 5, 8, 11, 0, 0)
+    with pytest.raises(InvalidWhen):
+        next_fire_at("cron", "0 12 * * *", None, naive)
+
+
+def test_next_fire_at_unknown_tz_rejected():
+    now = dt.datetime(2026, 5, 8, 11, 0, 0, tzinfo=UTC)
+    with pytest.raises(InvalidWhen):
+        next_fire_at("cron", "0 12 * * *", "America/Typo", now)
