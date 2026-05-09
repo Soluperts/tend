@@ -100,14 +100,17 @@ def _make_tts(settings: Settings) -> tuple[TTSService, int]:
             logger.warning(f"ElevenLabs preflight failed: {err}; falling back to local Piper")
         else:
             from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
+            settings_kwargs: dict = {
+                "voice": settings.elevenlabs_voice_id,
+                "model": settings.elevenlabs_model,
+            }
+            if settings.elevenlabs_speed is not None:
+                settings_kwargs["speed"] = settings.elevenlabs_speed
             return (
                 ElevenLabsTTSService(
                     api_key=settings.elevenlabs_api_key,
                     sample_rate=rate,
-                    settings=ElevenLabsTTSService.Settings(
-                        voice=settings.elevenlabs_voice_id,
-                        model=settings.elevenlabs_model,
-                    ),
+                    settings=ElevenLabsTTSService.Settings(**settings_kwargs),
                 ),
                 rate,
             )

@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     # TTS
     elevenlabs_voice_id: str = "EXAVITQu4vr4xnSDxMaL"
     elevenlabs_model: str = "eleven_turbo_v2_5"
+    # Playback speed for ElevenLabs. None keeps the API default (1.0).
+    # The API accepts roughly 0.7–1.2; values outside that range will
+    # be rejected by ElevenLabs.
+    elevenlabs_speed: float | None = None
     piper_voice: str = "en_US-ryan-high"
 
     # Audio
