@@ -435,7 +435,7 @@ async def test_general_worker_quarantines_unsafe_skill_authored_this_run(tmp_pat
     monkeypatch.setattr(worker, "run_claude", fake_run_claude)
 
     captured_updates = []
-    async def fake_announce(task_id, entry, *, created=None, quarantined=None):
+    async def fake_announce(task_id, entry, *, created=None, quarantined=None, **kwargs):
         captured_updates.append({
             "task_id": task_id, "entry": entry,
             "created": list(created or []),
@@ -509,7 +509,7 @@ async def test_general_worker_marks_clean_skill_as_created(tmp_path, monkeypatch
     monkeypatch.setattr(worker, "run_claude", fake_run_claude)
 
     captured_updates = []
-    async def fake_announce(task_id, entry, *, created=None, quarantined=None):
+    async def fake_announce(task_id, entry, *, created=None, quarantined=None, **kwargs):
         captured_updates.append({
             "created": list(created or []),
             "quarantined": list(quarantined or []),
@@ -527,3 +527,117 @@ async def test_general_worker_marks_clean_skill_as_created(tmp_path, monkeypatch
     assert (skills_root / "good-skill" / "SKILL.md").is_file()
     assert captured_updates[0]["created"] == ["good-skill"]
     assert captured_updates[0]["quarantined"] == []
+
+
+async def test_silent_default_skips_announcement_when_summary_marks_silent(tmp_path, monkeypatch):
+    """If silent_default=True and the spoken summary is the conventional
+    silent marker, the worker should NOT call announcer.announce."""
+    from unittest.mock import AsyncMock, MagicMock
+    from tend.config import WorkerConfig
+    from tend.workers.general import GeneralWorker
+
+    bus = MagicMock()
+    bus.publish = AsyncMock()
+    announcer = MagicMock()
+    announcer.announce = AsyncMock(return_value=True)
+    store = MagicMock()
+    cfg = WorkerConfig()
+
+    worker = GeneralWorker(
+        "general", bus=bus, store=store, config=cfg,
+        announcer=announcer,
+    )
+
+    msg = MagicMock()
+    msg.task_id = "t1"
+    msg.payload = {"request": "tick", "silent_default": True}
+
+    async def fake_run_claude(spec):
+        entry = MagicMock()
+        entry.spoken_summary = "(nothing to surface)"
+        entry.session_id = "s"
+        entry.cwd = str(tmp_path)
+        entry.request = "tick"
+        return entry
+
+    worker.run_claude = fake_run_claude
+    worker.send_task_update = AsyncMock()
+    worker.send_task_response = AsyncMock()
+    monkeypatch.setattr(worker, "_post_run_scan", lambda *a, **kw: ([], []))
+
+    await worker.do_task(msg)
+
+    announcer.announce.assert_not_awaited()
+
+
+async def test_silent_default_announces_when_summary_has_content(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+    from tend.config import WorkerConfig
+    from tend.workers.general import GeneralWorker
+
+    bus = MagicMock()
+    bus.publish = AsyncMock()
+    announcer = MagicMock()
+    announcer.announce = AsyncMock(return_value=True)
+    store = MagicMock()
+    cfg = WorkerConfig()
+    worker = GeneralWorker(
+        "general", bus=bus, store=store, config=cfg, announcer=announcer,
+    )
+
+    msg = MagicMock()
+    msg.task_id = "t1"
+    msg.payload = {"request": "tick", "silent_default": True}
+
+    async def fake_run(spec):
+        entry = MagicMock()
+        entry.spoken_summary = "Your meeting starts in five minutes."
+        entry.session_id = "s"
+        entry.cwd = str(tmp_path)
+        entry.request = "tick"
+        return entry
+
+    worker.run_claude = fake_run
+    worker.send_task_update = AsyncMock()
+    worker.send_task_response = AsyncMock()
+    monkeypatch.setattr(worker, "_post_run_scan", lambda *a, **kw: ([], []))
+
+    await worker.do_task(msg)
+    announcer.announce.assert_awaited_once()
+
+
+async def test_normal_request_uses_announcer(tmp_path, monkeypatch):
+    """In normal (non-silent) mode the worker still goes through announcer."""
+    from unittest.mock import AsyncMock, MagicMock
+    from tend.config import WorkerConfig
+    from tend.workers.general import GeneralWorker
+
+    bus = MagicMock()
+    bus.publish = AsyncMock()
+    announcer = MagicMock()
+    announcer.announce = AsyncMock(return_value=True)
+    store = MagicMock()
+    cfg = WorkerConfig()
+    worker = GeneralWorker(
+        "general", bus=bus, store=store, config=cfg, announcer=announcer,
+    )
+
+    msg = MagicMock()
+    msg.task_id = "t1"
+    msg.payload = {"request": "x"}
+
+    async def fake_run(spec):
+        entry = MagicMock()
+        entry.spoken_summary = "Done."
+        entry.session_id = "s"
+        entry.cwd = str(tmp_path)
+        entry.request = "x"
+        return entry
+
+    worker.run_claude = fake_run
+    worker.send_task_update = AsyncMock()
+    worker.send_task_response = AsyncMock()
+    monkeypatch.setattr(worker, "_post_run_scan", lambda *a, **kw: ([], []))
+
+    await worker.do_task(msg)
+    announcer.announce.assert_awaited_once()

@@ -44,6 +44,8 @@ from tend.workers.claude_cli import ClaudeCliWorker, ClaudeRunSpec
 DEFAULT_WORKSPACE = Path.home() / ".tend" / "workspace"
 DEFAULT_SKILLS_DIR = Path.home() / ".tend" / "skills"
 
+SILENT_MARKER = "(nothing to surface)"
+
 
 def _resolve_workspace(config: WorkerConfig) -> Path:
     raw = config.workspace_dir
@@ -84,6 +86,16 @@ Two paths for any incoming request:
    If the request is a *one-shot* (chitchat, "what's 17x19", "tell me a
    joke"), just answer inline; do not author a skill.
 
+If the dispatch payload sets silent_default=true, you are running on the
+heartbeat tick. Default to NOT speaking: only produce a non-empty spoken
+summary if there is something the user genuinely needs to hear right
+now. If nothing is worth surfacing, end your run with the literal phrase
+"(nothing to surface)" as your last assistant message.
+
+If the dispatch payload includes an `event` block, the user did not ask
+for this directly — a trigger fired (vision daemon, calendar, etc.). Be
+brief; the user did not invite a long answer.
+
 Skill naming: hyphen-case lowercase, descriptive (`meal-plan`, not `mp`).
 Same-name conflicts: prefer appending or replacing a section over silent
 overwrite.
@@ -109,6 +121,7 @@ class GeneralWorker(ClaudeCliWorker):
         subprocess_factory=None,
         workspace_dir: Path | None = None,
         skills_dir: Path | None = None,
+        announcer=None,
     ):
         super().__init__(
             name, bus=bus, store=store, subprocess_factory=subprocess_factory,
@@ -116,6 +129,7 @@ class GeneralWorker(ClaudeCliWorker):
         self._config = config
         self._workspace_dir = workspace_dir or _resolve_workspace(config)
         self._workspace_skills_dir = skills_dir or _resolve_skills_dir(config)
+        self._announcer = announcer
 
     def _ensure_workspace(self) -> Path:
         """Make sure the workspace dir exists. Idempotent."""
@@ -126,6 +140,9 @@ class GeneralWorker(ClaudeCliWorker):
     async def do_task(self, message) -> None:
         request = str(message.payload["request"])
         resume_id = message.payload.get("resume_session_id")
+        silent_default = bool(message.payload.get("silent_default", False))
+        pinned_skill = message.payload.get("skill")
+        event = message.payload.get("event")
 
         # Note: `except Exception` deliberately does NOT catch
         # `asyncio.CancelledError` (a BaseException). Cancellation should
@@ -145,6 +162,17 @@ class GeneralWorker(ClaudeCliWorker):
             catalog = format_catalog_xml(skills)
             if catalog:
                 system_prompt = system_prompt + "\n" + catalog
+            # Inject context blocks for the worker preamble to read.
+            if pinned_skill:
+                system_prompt += (
+                    f"\n\n<pinned-skill>{pinned_skill}</pinned-skill>"
+                )
+            if event:
+                system_prompt += (
+                    f"\n\n<event>{event}</event>"
+                )
+            if silent_default:
+                system_prompt += "\n\n<silent_default>true</silent_default>"
             spec = ClaudeRunSpec(
                 prompt=request,
                 system_prompt=system_prompt,
@@ -178,6 +206,8 @@ class GeneralWorker(ClaudeCliWorker):
             await self._announce(
                 message.task_id, entry,
                 created=created, quarantined=quarantined,
+                silent_default=silent_default,
+                category=pinned_skill or "general",
             )
         except Exception as e:
             logger.exception("GeneralWorker _announce failed after successful run")
@@ -223,25 +253,46 @@ class GeneralWorker(ClaudeCliWorker):
                 created.append(child.name)
         return created, quarantined
 
-    async def _announce(self, task_id, entry, *, created=None, quarantined=None):
-        spoken = entry.spoken_summary or "Task complete."
-        await self.bus.publish(BusFrameMessage(
-            source=self.name,
-            frame=TTSSpeakFrame(spoken),
-            direction=FrameDirection.DOWNSTREAM,
-        ))
+    async def _announce(
+        self, task_id, entry, *,
+        created=None, quarantined=None,
+        silent_default: bool = False,
+        category: str = "general",
+    ):
+        spoken = (entry.spoken_summary or "").strip()
+        is_silent = silent_default and (
+            spoken == "" or spoken.lower() == SILENT_MARKER.lower()
+        )
+        if not is_silent:
+            text = spoken or "Task complete."
+            if self._announcer is not None:
+                await self._announcer.announce(
+                    text=text,
+                    source=f"worker:{self.name}",
+                    category=category,
+                    urgent=False,
+                )
+            else:
+                # Back-compat for the period where main.py hasn't wired the
+                # announcer yet — fall through to publishing TTS directly.
+                await self.bus.publish(BusFrameMessage(
+                    source=self.name,
+                    frame=TTSSpeakFrame(text),
+                    direction=FrameDirection.DOWNSTREAM,
+                ))
         await self.send_task_update(task_id, {
             "kind": "announcement",
-            "spoken": spoken,
+            "spoken": "" if is_silent else (spoken or "Task complete."),
             "context": {
                 "session_id": entry.session_id,
                 "workspace": entry.cwd,
                 "request": entry.request,
                 "skills_created": list(created or []),
                 "skills_quarantined": list(quarantined or []),
+                "silent": is_silent,
             },
         })
-        await self.send_task_response(task_id, {"delivered": True})
+        await self.send_task_response(task_id, {"delivered": not is_silent})
 
     async def _announce_error(self, task_id, request, exc):
         spoken = "Sorry, the task didn't complete."
