@@ -26,11 +26,19 @@ from tend.skills import enumerate_skills
 
 
 def _default_root() -> Path:
+    override = os.environ.get("TEND_ROOT")
+    if override:
+        return Path(override)
     return Path.home() / ".tend"
 
 
 def _store() -> SessionStore:
     return SessionStore(root=_default_root())
+
+
+def _cron_store():
+    from tend.cron_store import CronStore
+    return CronStore(root=_default_root())
 
 
 def _ago(ts_ms: int) -> str:
@@ -375,6 +383,93 @@ def cmd_scan_skill(args) -> int:
     return 2 if report.is_critical else 1
 
 
+def cmd_schedule_list(args) -> int:
+    store = _cron_store()
+    jobs = store.load_jobs()
+    if not jobs:
+        print("No schedules.")
+        return 0
+    for j in jobs:
+        state = store.get_state(j.id)
+        nfa = state.next_run_at or "(unknown)"
+        print(
+            f"{j.name:<24} {j.kind:<6} {j.schedule:<22} "
+            f"source={j.source:<22} next={nfa}"
+        )
+    return 0
+
+
+def cmd_schedule_show(args) -> int:
+    store = _cron_store()
+    name_or_id = args.name_or_id
+    match = next(
+        (j for j in store.load_jobs()
+         if j.name == name_or_id or j.id.startswith(name_or_id)),
+        None,
+    )
+    if match is None:
+        print(f"No schedule matching {name_or_id!r}", file=sys.stderr)
+        return 2
+    print(f"id          {match.id}")
+    print(f"name        {match.name}")
+    print(f"kind        {match.kind}")
+    print(f"schedule    {match.schedule}")
+    print(f"tz          {match.tz}")
+    print(f"source      {match.source}")
+    print(f"enabled     {match.enabled}")
+    print(f"created_at  {match.created_at}")
+    print(f"payload     {json.dumps(match.payload)}")
+    state = store.get_state(match.id)
+    print(f"last_run    {state.last_run_at} ({state.last_run_status})")
+    print(f"next_run    {state.next_run_at}")
+    if state.last_error:
+        print(f"last_error  {state.last_error}")
+    return 0
+
+
+def cmd_schedule_add(args) -> int:
+    from tend.cron_time import InvalidWhen, parse_when, next_fire_at
+    import datetime as _dt
+    from zoneinfo import ZoneInfo
+    store = _cron_store()
+    try:
+        kind, schedule = parse_when(args.when)
+    except InvalidWhen as e:
+        print(f"invalid --when: {e}", file=sys.stderr)
+        return 2
+    job = store.add_job(
+        name=args.name, kind=kind, schedule=schedule,
+        tz=args.tz or "UTC",
+        payload={"request": args.request},
+        source="cli", enabled=True,
+    )
+    nfa = next_fire_at(
+        kind, schedule, args.tz or "UTC",
+        _dt.datetime.now(tz=ZoneInfo("UTC")),
+    )
+    from tend.cron_store import JobState
+    store.set_state(job.id, JobState(next_run_at=nfa.isoformat()))
+    print(f"added {job.id[:8]} {job.name}")
+    return 0
+
+
+def cmd_schedule_rm(args) -> int:
+    store = _cron_store()
+    name_or_id = args.name_or_id
+    match = next(
+        (j for j in store.load_jobs()
+         if j.name == name_or_id or j.id.startswith(name_or_id)),
+        None,
+    )
+    if match is None:
+        print(f"No schedule matching {name_or_id!r}", file=sys.stderr)
+        return 2
+    store.remove_job(match.id)
+    store.remove_state(match.id)
+    print(f"removed {match.name}")
+    return 0
+
+
 _TOP_EPILOG = """\
 Environment variables:
   TEND_SKILLS_ROOT             Override skills root (default: ~/.tend/skills)
@@ -569,6 +664,39 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     sk_q.set_defaults(func=cmd_skills_quarantined)
+
+    # schedule ---------------------------------------------------------------
+    sched_p = sub.add_parser(
+        "schedule",
+        help="List, add, and remove scheduled jobs.",
+        description=(
+            "Manage scheduled jobs at ~/.tend/cron/jobs.json. The running tend "
+            "daemon picks up changes; add/rm here is equivalent to using the "
+            "voice tools."
+        ),
+    )
+    sched = sched_p.add_subparsers(
+        dest="action", required=True, title="actions", metavar="<action>",
+    )
+
+    sl = sched.add_parser("list", help="List active schedules.")
+    sl.set_defaults(func=cmd_schedule_list)
+
+    ss = sched.add_parser("show", help="Show one schedule.")
+    ss.add_argument("name_or_id")
+    ss.set_defaults(func=cmd_schedule_show)
+
+    sa = sched.add_parser("add", help="Add a new schedule.")
+    sa.add_argument("--when", required=True,
+                    help="cron expr / 'in 30m' / 'every 30m' / ISO timestamp")
+    sa.add_argument("--request", required=True, help="What the worker should do.")
+    sa.add_argument("--name", required=True, help="Label for cancel/list later.")
+    sa.add_argument("--tz", default=None, help="Timezone for cron schedules.")
+    sa.set_defaults(func=cmd_schedule_add)
+
+    sr = sched.add_parser("rm", help="Remove a schedule by name or id prefix.")
+    sr.add_argument("name_or_id")
+    sr.set_defaults(func=cmd_schedule_rm)
 
     return p
 
