@@ -63,8 +63,13 @@ class Scheduler(BaseAgent):
         tz: str | None = None,
         payload_extras: dict | None = None,
     ) -> CronJob:
+        # Validate everything before persisting — a bad tz would otherwise
+        # leave a half-written row in jobs.json.
         kind, schedule = parse_when(when)
         effective_tz = tz or self._default_tz
+        nfa = next_fire_at(
+            kind, schedule, effective_tz, dt.datetime.now(tz=ZoneInfo("UTC")),
+        )
         payload: dict = {"request": request}
         if payload_extras:
             payload.update(payload_extras)
@@ -72,19 +77,9 @@ class Scheduler(BaseAgent):
             name=name, kind=kind, schedule=schedule, tz=effective_tz,
             payload=payload, source=source, enabled=True,
         )
-        nfa = next_fire_at(
-            kind, schedule, effective_tz, dt.datetime.now(tz=ZoneInfo("UTC")),
-        )
-        st = self._store.get_state(job.id)
         self._store.set_state(
             job.id,
-            JobState(
-                last_run_at=st.last_run_at,
-                last_run_status=st.last_run_status,
-                last_error=st.last_error,
-                next_run_at=nfa.isoformat(),
-                consecutive_errors=st.consecutive_errors,
-            ),
+            JobState(next_run_at=nfa.isoformat()),
         )
         self._wakeup.set()
         return job

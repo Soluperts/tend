@@ -148,3 +148,16 @@ async def test_missed_at_skip_does_not_fire(store, dispatch):
     await s.fire_missed_now()
     dispatch.assert_not_awaited()
     assert store.load_jobs() == []  # skipped, deleted
+
+
+def test_add_job_invalid_tz_does_not_persist(store, dispatch):
+    """A bad tz must not leave an orphaned row in jobs.json."""
+    from tend.cron_time import InvalidWhen
+
+    s = _new_scheduler(store, dispatch)
+    with pytest.raises(InvalidWhen):
+        s.add_job(
+            when="0 12 * * *", request="x", name="bad",
+            source="cli", tz="Mars/Capital",
+        )
+    assert store.load_jobs() == []
