@@ -77,11 +77,24 @@ GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=$HOME/.tend/secrets/google-creds.json \
     --summary "tend" \
     --description "Schedule blocks managed by tend" \
     --json \
-  | jq -r '.id' \
+  | python3 -c "import json, sys; print(json.load(sys.stdin)['id'])" \
   > ~/.tend/google/tend-calendar-id
 
 cat ~/.tend/google/tend-calendar-id   # sanity-check the ID is there
 ```
+
+If you've already run the create command and got a `jq: command not
+found` error, the calendar may have been created anyway (gws panics
+on the broken pipe *after* writing its output). Check with:
+
+```bash
+GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=$HOME/.tend/secrets/google-creds.json \
+  gws calendar list --json \
+  | python3 -c "import json, sys; m=[c for c in json.load(sys.stdin) if c.get('summary')=='tend']; print(m[0]['id'] if m else 'NONE')"
+```
+
+If it prints an id, save it to `~/.tend/google/tend-calendar-id`
+manually and skip the create.
 
 ## 7. Restart tend
 
