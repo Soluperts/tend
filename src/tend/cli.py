@@ -367,6 +367,71 @@ def cmd_skills_quarantined(args) -> int:
     return 0
 
 
+def cmd_skills_enable_triggers(args) -> int:
+    """Print the schedules the running daemon would create. The daemon
+    itself owns the schedules; the CLI is a planning aid (no IPC)."""
+    name = _validate_skill_name(args.name)
+    from tend.skills import enumerate_skills
+    skills = [s for s in enumerate_skills(_skills_root()) if s.name == name]
+    if not skills:
+        print(f"No skill named {name!r}", file=sys.stderr)
+        return 2
+    info = skills[0]
+    if not info.triggers:
+        print(f"{name}: no triggers declared in frontmatter")
+        return 0
+    print(f"{name}: {len(info.triggers)} trigger(s) — ask the running daemon")
+    print("to enable via voice ('enable triggers for x') or by editing")
+    print("~/.tend/cron/jobs.json directly while tend is stopped.")
+    for t in info.triggers:
+        print(f"  - {t}")
+    return 0
+
+
+def cmd_skills_disable_triggers(args) -> int:
+    name = _validate_skill_name(args.name)
+    store = _cron_store()
+    rows = store.find_by_source(f"skill:{name}")
+    if not rows:
+        print(f"{name}: no active triggers")
+        return 0
+    count = store.remove_by_source(f"skill:{name}")
+    print(f"{name}: removed {count} trigger(s)")
+    return 0
+
+
+def cmd_webhook_test(args) -> int:
+    import urllib.request
+    token = os.environ.get("TEND_WEBHOOK_TOKEN")
+    if not token:
+        print(
+            "TEND_WEBHOOK_TOKEN is not set; cannot test the webhook.",
+            file=sys.stderr,
+        )
+        return 2
+    from tend.config import settings
+    url = f"http://{settings.webhook.host}:{settings.webhook.port}/say"
+    req = urllib.request.Request(
+        url, method="POST",
+        data=json.dumps({
+            "text": "tend webhook test",
+            "category": "test",
+            "urgent": True,
+        }).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            print(resp.read().decode())
+        return 0
+    except Exception as e:
+        print(f"webhook unreachable: {e}", file=sys.stderr)
+        return 1
+
+
 def cmd_scan_skill(args) -> int:
     from tend.skills import scan_text
     name = _validate_skill_name(args.name)
@@ -665,6 +730,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sk_q.set_defaults(func=cmd_skills_quarantined)
 
+    sk_en = skills.add_parser(
+        "enable-triggers",
+        help="Show triggers a skill will activate (informational; the running "
+             "daemon owns the schedule).",
+    )
+    sk_en.add_argument("name")
+    sk_en.set_defaults(func=cmd_skills_enable_triggers)
+
+    sk_dis = skills.add_parser(
+        "disable-triggers",
+        help="Remove all schedule entries previously enabled from a skill.",
+    )
+    sk_dis.add_argument("name")
+    sk_dis.set_defaults(func=cmd_skills_disable_triggers)
+
     # schedule ---------------------------------------------------------------
     sched_p = sub.add_parser(
         "schedule",
@@ -697,6 +777,20 @@ def build_parser() -> argparse.ArgumentParser:
     sr = sched.add_parser("rm", help="Remove a schedule by name or id prefix.")
     sr.add_argument("name_or_id")
     sr.set_defaults(func=cmd_schedule_rm)
+
+    # webhook ----------------------------------------------------------------
+    wh_p = sub.add_parser(
+        "webhook",
+        help="Probe the local webhook server.",
+    )
+    wh_actions = wh_p.add_subparsers(
+        dest="action", required=True, title="actions", metavar="<action>",
+    )
+    wt = wh_actions.add_parser(
+        "test",
+        help="POST a smoke message to /say (requires TEND_WEBHOOK_TOKEN).",
+    )
+    wt.set_defaults(func=cmd_webhook_test)
 
     return p
 

@@ -306,3 +306,33 @@ def test_scan_skill_invalid_name(tmp_path, monkeypatch):
     from tend.cli import main
     with pytest.raises(SystemExit):
         main(["scan-skill", "../etc"])
+
+
+def test_skills_enable_triggers_no_running_daemon(tmp_path, monkeypatch, capsys):
+    """enable-triggers without a running daemon is a no-op that explains
+    itself, since the CLI cannot dispatch onto the bus."""
+    from tend.cli import main
+    monkeypatch.setenv("TEND_ROOT", str(tmp_path))
+    skill_dir = tmp_path / "skills" / "x"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: x\ndescription: y\n"
+        "triggers:\n  - cron: \"0 12 * * *\"\n    request: hi\n"
+        "---\nbody\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TEND_SKILLS_ROOT", str(tmp_path / "skills"))
+
+    rc = main(["skills", "enable-triggers", "x"])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "x" in captured.out
+
+
+def test_webhook_test_unconfigured_token(monkeypatch, capsys):
+    monkeypatch.delenv("TEND_WEBHOOK_TOKEN", raising=False)
+    from tend.cli import main
+    rc = main(["webhook", "test"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "TEND_WEBHOOK_TOKEN" in err
