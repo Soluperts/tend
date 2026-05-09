@@ -13,7 +13,7 @@ from __future__ import annotations
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Awaitable, Callable
+from typing import Callable
 
 from loguru import logger
 from pipecat.frames.frames import LLMMessagesAppendFrame, TTSSpeakFrame
@@ -78,7 +78,7 @@ class ProactiveAnnouncer:
 
     async def drain_pending(self) -> None:
         """Called when Brain transitions to inactive. Publishes queued
-        announcements still inside their cooldown window."""
+        announcements that are no longer on cooldown; drops the rest."""
         while self._pending:
             p = self._pending.popleft()
             if self._on_cooldown(p.category):
