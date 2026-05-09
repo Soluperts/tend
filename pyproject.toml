@@ -5,6 +5,7 @@ description = "Personal AI assistant for desk workers (Raspberry Pi voice agent)
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.40",
+    "croniter>=1.4",
     "loguru>=0.7",
     "openwakeword>=0.4",
     "pipecat-ai[whisper,piper,silero,local,deepgram,elevenlabs]>=1.1",
