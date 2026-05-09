@@ -54,7 +54,7 @@ posture = 600
 hydration = 900
 
 [google]
-watched_calendars = ["tend", "primary"]
+watched_calendars = ["tend", "luthraridhwan@gmail.com"]
 
 [google.events.deep-work]
 upcoming_lead = "5m"

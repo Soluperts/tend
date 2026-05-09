@@ -10,7 +10,10 @@
 # Usage:
 #   gws-agenda.sh --calendar <name> --today --json
 #   gws-agenda.sh --next 1 --json
-#   gws-agenda.sh --week --calendar primary --json
+#
+# Note: --calendar takes a calendar's summary or ID, not the literal
+# "primary" alias. Use the actual summary (your email for the primary
+# calendar) in tend.toml's google.watched_calendars list.
 #
 # For time-window queries (--time-min/--time-max), use
 # gws-events-window.sh instead.
