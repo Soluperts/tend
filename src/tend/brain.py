@@ -97,16 +97,6 @@ class Brain(LLMAgent):
             direction=FrameDirection.DOWNSTREAM,
         ))
 
-    async def _ensure_reminder_worker(self) -> None:
-        from tend.workers.reminder import ReminderWorker
-        for child in getattr(self, "_children", []) or []:
-            if getattr(child, "name", None) == "reminder":
-                return
-        try:
-            await self.add_agent(ReminderWorker("reminder", bus=self.bus))
-        except Exception as e:
-            logger.debug(f"reminder worker may already exist: {e!r}")
-
     async def _ensure_general_worker(self) -> None:
         from tend.config import WorkerConfig, settings
         from tend.workers.general import GeneralWorker
@@ -133,9 +123,18 @@ class Brain(LLMAgent):
             seconds (int): How long to wait (in seconds) before the reminder fires.
             what (str): The thing to remind about. Plain text, will be spoken aloud.
         """
-        await self._ensure_reminder_worker()
-        await self.request_task("reminder", payload={"seconds": int(seconds), "what": what})
-        return f"Got it. I'll remind you in {int(seconds)} seconds."
+        if self._scheduler is None:
+            await params.result_callback("Scheduler not configured.")
+            return
+        self._scheduler.add_job(
+            when=f"in {int(seconds)}s",
+            request=what,
+            name=f"reminder-{int(__import__('time').time())}",
+            source="voice",
+        )
+        await params.result_callback(
+            f"Got it. I'll remind you in {int(seconds)} seconds."
+        )
 
     @tool
     async def start_fresh(self, params: FunctionCallParams):

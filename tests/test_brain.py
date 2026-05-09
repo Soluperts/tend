@@ -69,3 +69,27 @@ async def test_on_task_update_unknown_kind_publishes_nothing(brain, mock_bus):
     msg.update = {"kind": "unknown", "data": "noise"}
     await brain.on_task_update(msg)
     assert _published_messages(mock_bus) == []
+
+
+async def test_remind_in_uses_scheduler():
+    """remind_in should add a one-shot at-job via scheduler.add_job."""
+    from tend.brain import Brain
+    from unittest.mock import AsyncMock, MagicMock
+    bus = MagicMock()
+    scheduler = MagicMock()
+    job = MagicMock()
+    job.id = "x"
+    job.name = "reminder"
+    scheduler.add_job = MagicMock(return_value=job)
+    brain = Brain(
+        "brain", bus=bus, llm_service=MagicMock(),
+        store=MagicMock(), scheduler=scheduler,
+    )
+    p = MagicMock()
+    p.result_callback = AsyncMock()
+    await brain.remind_in(p, seconds=120, what="oven")
+    scheduler.add_job.assert_called_once()
+    kwargs = scheduler.add_job.call_args.kwargs
+    assert kwargs["when"].lower().startswith("in ")
+    assert "120s" in kwargs["when"]
+    assert kwargs["request"] == "oven"
