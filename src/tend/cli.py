@@ -496,17 +496,50 @@ def cmd_schedule_add(args) -> int:
     from tend.cron_time import InvalidWhen, parse_when, next_fire_at
     import datetime as _dt
     from zoneinfo import ZoneInfo
+
+    if args.event and args.request:
+        print(
+            "--event and --request are mutually exclusive.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.event and not args.payload:
+        print("--event requires --payload (use '{}' for empty).", file=sys.stderr)
+        return 2
+    if not args.event and not args.request:
+        print("either --request or --event is required.", file=sys.stderr)
+        return 2
+
+    event_payload: dict | None = None
+    if args.event:
+        try:
+            event_payload = json.loads(args.payload)
+        except json.JSONDecodeError as e:
+            print(f"--payload is not valid JSON: {e}", file=sys.stderr)
+            return 2
+        if not isinstance(event_payload, dict):
+            print("--payload must be a JSON object.", file=sys.stderr)
+            return 2
+
     store = _cron_store()
     try:
         kind, schedule = parse_when(args.when)
     except InvalidWhen as e:
         print(f"invalid --when: {e}", file=sys.stderr)
         return 2
+
+    if args.event:
+        payload = {}
+    else:
+        payload = {"request": args.request}
+
     job = store.add_job(
         name=args.name, kind=kind, schedule=schedule,
         tz=args.tz or "UTC",
-        payload={"request": args.request},
-        source="cli", enabled=True,
+        payload=payload,
+        source=args.source, enabled=True,
+        event_kind=args.event,
+        event_payload=event_payload,
     )
     nfa = next_fire_at(
         kind, schedule, args.tz or "UTC",
@@ -769,9 +802,16 @@ def build_parser() -> argparse.ArgumentParser:
     sa = sched.add_parser("add", help="Add a new schedule.")
     sa.add_argument("--when", required=True,
                     help="cron expr / 'in 30m' / 'every 30m' / ISO timestamp")
-    sa.add_argument("--request", required=True, help="What the worker should do.")
     sa.add_argument("--name", required=True, help="Label for cancel/list later.")
     sa.add_argument("--tz", default=None, help="Timezone for cron schedules.")
+    sa.add_argument("--request", default=None,
+                    help="What the worker should do. Mutually exclusive with --event.")
+    sa.add_argument("--event", default=None,
+                    help="Event kind to dispatch (e.g. lunch.upcoming). Requires --payload.")
+    sa.add_argument("--payload", default=None,
+                    help="JSON payload for --event mode.")
+    sa.add_argument("--source", default="cli",
+                    help="Source label for the schedule entry (default: cli).")
     sa.set_defaults(func=cmd_schedule_add)
 
     sr = sched.add_parser("rm", help="Remove a schedule by name or id prefix.")

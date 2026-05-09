@@ -35,6 +35,7 @@ def _new_scheduler(store, dispatch, **overrides):
         bus=bus,
         store=store,
         dispatch=dispatch,
+        skills_root=overrides.get("skills_root"),
         default_tz=overrides.get("default_tz", "UTC"),
         missed_at_policy=overrides.get("missed_at_policy", "run-on-restart"),
     )
@@ -202,3 +203,80 @@ def test_compute_wait_s_short_horizon_pass_through(store, dispatch):
     soon = (job, now + dt.timedelta(seconds=10))
     wait_s = s._compute_wait_s(soon, now)
     assert 9.0 < wait_s < 11.0
+
+
+def _seed_skill(root, name, events):
+    d = root / name
+    d.mkdir(parents=True, exist_ok=True)
+    body_events = "\n".join(f"  - {e}" for e in events)
+    (d / "SKILL.md").write_text(
+        f"---\n"
+        f"name: {name}\n"
+        f"description: test\n"
+        f"events:\n{body_events}\n"
+        f"---\n# {name}\n"
+    )
+
+
+async def test_event_mode_job_routes_via_dispatch_event(
+    store, dispatch, tmp_path,
+):
+    skills_root = tmp_path / "skills"
+    skills_root.mkdir()
+    _seed_skill(skills_root, "lunch-prep", ["lunch.upcoming"])
+
+    bus = MagicMock()
+    bus.publish = AsyncMock()
+    s = Scheduler(
+        "scheduler",
+        bus=bus,
+        store=store,
+        dispatch=dispatch,
+        skills_root=skills_root,
+        default_tz="UTC",
+        missed_at_policy="run-on-restart",
+    )
+    j = s.add_job(
+        when=(dt.datetime.now(tz=UTC) + dt.timedelta(seconds=60)).isoformat(),
+        request="(unused for event jobs)",
+        name="lunch-fire", source="schedule-watcher",
+        event_kind="lunch.upcoming",
+        event_payload={"event_id": "x"},
+    )
+    await s._fire_job(j)
+
+    # The event-mode job should fan out to lunch-prep via dispatch (the
+    # same callable, target="general", with event payload structure).
+    dispatch.assert_awaited_once()
+    target, payload = dispatch.call_args.args
+    assert target == "general"
+    assert payload["skill"] == "lunch-prep"
+    assert payload["event"]["kind"] == "lunch.upcoming"
+    assert payload["event"]["event_id"] == "x"
+
+
+async def test_legacy_job_still_dispatches_to_general(store, dispatch, tmp_path):
+    skills_root = tmp_path / "skills"
+    skills_root.mkdir()
+
+    bus = MagicMock()
+    bus.publish = AsyncMock()
+    s = Scheduler(
+        "scheduler",
+        bus=bus,
+        store=store,
+        dispatch=dispatch,
+        skills_root=skills_root,
+        default_tz="UTC",
+        missed_at_policy="run-on-restart",
+    )
+    j = s.add_job(
+        when="every 1m", request="hi",
+        name="legacy", source="voice",
+    )  # no event_kind
+    await s._fire_job(j)
+
+    dispatch.assert_awaited_once()
+    target, payload = dispatch.call_args.args
+    assert target == "general"
+    assert payload == {"request": "hi"}

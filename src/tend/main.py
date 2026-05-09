@@ -82,6 +82,56 @@ def _seed_heartbeat_skill() -> None:
     target.write_text(HEARTBEAT_SKILL_BODY, encoding="utf-8")
 
 
+_REPO_SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
+
+REPO_SKILL_NAMES = (
+    "schedule-watcher",
+    "briefing",
+    "meeting-prep",
+    "mail-triage",
+    "routine-setup",
+    "schedule-block",
+    "lunch-prep",
+    "post-deep-work",
+)
+
+
+def _seed_skill_from_repo(skill_dir: Path) -> None:
+    """Copy a repo-shipped skill into ~/.tend/skills/<name>/ if not
+    already present. Idempotent: never overwrites a skill the user has
+    edited."""
+    target = Path.home() / ".tend" / "skills" / skill_dir.name
+    if target.exists():
+        return
+    import shutil
+    shutil.copytree(skill_dir, target)
+    logger.info(f"seeded skill {skill_dir.name}")
+
+
+_REPO_WORKSPACE_BIN = (
+    Path(__file__).resolve().parents[2] / "workspace" / "bin"
+)
+
+
+def _seed_workspace_bin() -> None:
+    """Copy repo workspace/bin/ scripts into ~/.tend/workspace/bin/.
+    Per-file: never overwrite existing scripts (user may have edited).
+    """
+    target = Path.home() / ".tend" / "workspace" / "bin"
+    target.mkdir(parents=True, exist_ok=True)
+    if not _REPO_WORKSPACE_BIN.exists():
+        return
+    import shutil
+    for src in _REPO_WORKSPACE_BIN.iterdir():
+        if not src.is_file():
+            continue
+        dst = target / src.name
+        if dst.exists():
+            continue
+        shutil.copy2(src, dst)
+        dst.chmod(0o755)
+
+
 def _seed_heartbeat_job(scheduler: Scheduler, every: str) -> None:
     if (every or "").lower() == "off":
         # Remove existing heartbeat job if disabled.
@@ -146,6 +196,7 @@ async def _run() -> None:
         dispatch=lambda target, payload: scheduler.request_task(
             target, payload=payload,
         ),
+        skills_root=Path.home() / ".tend" / "skills",
         default_tz=settings.timezone or "UTC",
         missed_at_policy=settings.scheduler.missed_at_policy,
     )
@@ -171,6 +222,7 @@ async def _run() -> None:
         "hub", bus=runner.bus, settings=settings,
         stt=stt, tts=tts, tts_sample_rate=tts_rate,
         brain=brain, announcer=announcer,
+        skills_root=Path.home() / ".tend" / "skills",
     )
 
     session_manager = SessionManager(
@@ -185,6 +237,9 @@ async def _run() -> None:
 
     # Seed heartbeat skill on first boot if missing.
     _seed_heartbeat_skill()
+    for name in REPO_SKILL_NAMES:
+        _seed_skill_from_repo(_REPO_SKILLS_DIR / name)
+    _seed_workspace_bin()
 
     # Webhook server — start before runner.run() so it is ready immediately.
     webhook_app = build_app(

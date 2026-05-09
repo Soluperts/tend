@@ -1,0 +1,25 @@
+{
+  "items": [
+    {
+      "id": "evt-1",
+      "summary": "[lunch] with kids",
+      "start": {"dateTime": "2026-05-09T12:00:00+00:00"},
+      "end": {"dateTime": "2026-05-09T13:00:00+00:00"},
+      "updated": "2026-05-08T20:00:00+00:00"
+    },
+    {
+      "id": "evt-2",
+      "summary": "[deep-work] write the plan",
+      "start": {"dateTime": "2026-05-09T09:00:00+00:00"},
+      "end": {"dateTime": "2026-05-09T11:00:00+00:00"},
+      "updated": "2026-05-08T20:00:00+00:00"
+    },
+    {
+      "id": "evt-3",
+      "summary": "Random meeting",
+      "start": {"dateTime": "2026-05-09T14:00:00+00:00"},
+      "end": {"dateTime": "2026-05-09T15:00:00+00:00"},
+      "updated": "2026-05-08T20:00:00+00:00"
+    }
+  ]
+}

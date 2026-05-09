@@ -42,6 +42,8 @@ class CronJob:
     source: str     # "voice" | "cli" | "skill:<name>"
     enabled: bool
     created_at: str
+    event_kind: str | None = None
+    event_payload: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -124,6 +126,8 @@ class CronStore:
         name: str, kind: str, schedule: str, tz: str | None,
         payload: dict, source: str, enabled: bool,
         id: str | None = None, created_at: str | None = None,
+        event_kind: str | None = None,
+        event_payload: dict | None = None,
     ) -> CronJob:
         import datetime as dt
         job = CronJob(
@@ -133,6 +137,8 @@ class CronStore:
             created_at=created_at or dt.datetime.now(
                 tz=dt.timezone.utc
             ).isoformat(),
+            event_kind=event_kind,
+            event_payload=event_payload,
         )
         jobs = self.load_jobs()
         jobs.append(job)

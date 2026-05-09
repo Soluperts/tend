@@ -63,3 +63,75 @@ def test_schedule_rm(tend_root):
     assert rc == 0
     rc, out = _run(["schedule", "list"])
     assert "tmp" not in out
+
+
+def test_schedule_add_event_mode(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("TEND_ROOT", str(tmp_path))
+    from tend.cli import main as cli_main
+    from tend.cron_store import CronStore
+
+    rc = cli_main([
+        "schedule", "add",
+        "--when", "2026-12-31T11:00:00+00:00",
+        "--event", "lunch.upcoming",
+        "--payload", '{"event_id":"abc","cal":"primary"}',
+        "--name", "lunch-fire",
+    ])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "added" in captured.out
+    store = CronStore(root=tmp_path)
+    rows = store.load_jobs()
+    assert len(rows) == 1
+    assert rows[0].event_kind == "lunch.upcoming"
+    assert rows[0].event_payload == {"event_id": "abc", "cal": "primary"}
+
+
+def test_schedule_add_event_requires_payload(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("TEND_ROOT", str(tmp_path))
+    from tend.cli import main as cli_main
+    rc = cli_main([
+        "schedule", "add",
+        "--when", "2026-12-31T11:00:00+00:00",
+        "--event", "lunch.upcoming",
+        "--name", "lunch-fire",
+    ])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "payload" in err.lower()
+
+
+def test_schedule_add_event_and_request_mutually_exclusive(
+    tmp_path, monkeypatch, capsys,
+):
+    monkeypatch.setenv("TEND_ROOT", str(tmp_path))
+    from tend.cli import main as cli_main
+    rc = cli_main([
+        "schedule", "add",
+        "--when", "in 1m",
+        "--event", "x.y",
+        "--payload", "{}",
+        "--request", "do something",
+        "--name", "weird",
+    ])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "mutually exclusive" in err.lower() or "not allowed" in err.lower()
+
+
+def test_schedule_add_custom_source(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("TEND_ROOT", str(tmp_path))
+    from tend.cli import main as cli_main
+    from tend.cron_store import CronStore
+
+    rc = cli_main([
+        "schedule", "add",
+        "--when", "in 1m",
+        "--request", "test",
+        "--name", "x",
+        "--source", "schedule-watcher",
+    ])
+    assert rc == 0
+    rows = CronStore(root=tmp_path).load_jobs()
+    assert len(rows) == 1
+    assert rows[0].source == "schedule-watcher"
