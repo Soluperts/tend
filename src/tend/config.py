@@ -106,10 +106,6 @@ class Settings(BaseSettings):
     # Day-session
     daily_reset_time: str = "04:00"
     timezone: str | None = None  # None → system default
-    soul_path: str = "soul.md"
-
-    # Logging
-    log_path: str = "/tmp/tend.log"
 
     # Per-worker config blocks. Keys are worker names; values are WorkerConfig.
     workers: dict[str, WorkerConfig] = {}

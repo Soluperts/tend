@@ -40,11 +40,18 @@ from tend.workers.general import GeneralWorker
 
 
 def _setup_logging() -> None:
+    from tend import paths
+
     logger.remove()
     logger.add(sys.stderr, level="INFO")
-    logger.add(settings.log_path, level="DEBUG", rotation="5 MB", retention=2)
-    fault_path = settings.log_path.replace(".log", ".faults.log")
-    fault_file = open(fault_path, "a", buffering=1)
+
+    log_target = paths.log_path()
+    log_target.parent.mkdir(parents=True, exist_ok=True)
+    logger.add(str(log_target), level="DEBUG", rotation="5 MB", retention=2)
+
+    fault_target = paths.fault_log_path()
+    fault_target.parent.mkdir(parents=True, exist_ok=True)
+    fault_file = open(fault_target, "a", buffering=1)
     fault_file.write("\n--- tend start ---\n")
     faulthandler.enable(file=fault_file, all_threads=True)
 
@@ -226,7 +233,6 @@ async def _run() -> None:
     session_manager = SessionManager(
         brain=brain,
         hub=hub,
-        soul_path=settings.soul_path,
         reset_time=settings.daily_reset_time,
         timezone=settings.timezone,
     )
@@ -265,7 +271,8 @@ async def _run() -> None:
 
 def main() -> None:
     _setup_logging()
-    logger.info(f"tend starting (log: {settings.log_path})")
+    from tend import paths
+    logger.info(f"tend starting (log: {paths.log_path()})")
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:

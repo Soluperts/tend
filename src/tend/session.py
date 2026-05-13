@@ -8,15 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import datetime
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from loguru import logger
 
-DEFAULT_SOUL = (
-    "You are a helpful voice assistant in the user's workroom. "
-    "Keep replies brief, no markdown, plain conversational prose only."
-)
+from tend import paths
 
 
 class SessionManager:
@@ -27,7 +23,6 @@ class SessionManager:
         *,
         brain,
         hub,
-        soul_path: Path | str,
         reset_time: str = "04:00",
         timezone: str | None = None,
     ):
@@ -36,18 +31,13 @@ class SessionManager:
         # concerns — keep both references explicit.
         self._brain = brain
         self._hub = hub
-        self._soul_path = Path(soul_path)
         self._reset_time = reset_time
         self._tz = ZoneInfo(timezone) if timezone else None
         self._pending_reset = False
         self._scheduled_task: asyncio.Task | None = None
 
     def _read_soul(self) -> str:
-        try:
-            return self._soul_path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            logger.warning(f"soul.md missing at {self._soul_path}; using built-in default")
-            return DEFAULT_SOUL
+        return paths.read_soul()
 
     async def start(self) -> None:
         """Load soul.md and trigger an initial reset_session, then schedule the daily reset."""
