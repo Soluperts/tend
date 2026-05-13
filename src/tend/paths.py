@@ -20,3 +20,47 @@ def tend_home() -> Path:
     if override:
         return Path(override)
     return Path.home() / ".config" / "tend"
+
+
+def user_skills_dir() -> Path:
+    return tend_home() / "skills"
+
+
+def workspace_bin_dir() -> Path:
+    return tend_home() / "workspace" / "bin"
+
+
+def soul_path() -> Path:
+    return tend_home() / "soul.md"
+
+
+def env_path() -> Path:
+    return tend_home() / ".env"
+
+
+def toml_path() -> Path:
+    return tend_home() / "tend.toml"
+
+
+def log_path() -> Path:
+    return tend_home() / "logs" / "tend.log"
+
+
+def fault_log_path() -> Path:
+    return tend_home() / "logs" / "tend.faults.log"
+
+
+def cron_root() -> Path:
+    return tend_home() / "cron"
+
+
+def sessions_dir() -> Path:
+    return tend_home() / "sessions"
+
+
+def skills_backup_root() -> Path:
+    return tend_home() / "skills-backup"
+
+
+def version_marker_path() -> Path:
+    return tend_home() / ".tend-version"
