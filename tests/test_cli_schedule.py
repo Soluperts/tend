@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from tend.cli import main
+from tend._cli_legacy import main
 
 
 @pytest.fixture
@@ -67,7 +67,7 @@ def test_schedule_rm(tend_root):
 
 def test_schedule_add_event_mode(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("TEND_ROOT", str(tmp_path))
-    from tend.cli import main as cli_main
+    from tend._cli_legacy import main as cli_main
     from tend.cron_store import CronStore
 
     rc = cli_main([
@@ -89,7 +89,7 @@ def test_schedule_add_event_mode(tmp_path, monkeypatch, capsys):
 
 def test_schedule_add_event_requires_payload(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("TEND_ROOT", str(tmp_path))
-    from tend.cli import main as cli_main
+    from tend._cli_legacy import main as cli_main
     rc = cli_main([
         "schedule", "add",
         "--when", "2026-12-31T11:00:00+00:00",
@@ -105,7 +105,7 @@ def test_schedule_add_event_and_request_mutually_exclusive(
     tmp_path, monkeypatch, capsys,
 ):
     monkeypatch.setenv("TEND_ROOT", str(tmp_path))
-    from tend.cli import main as cli_main
+    from tend._cli_legacy import main as cli_main
     rc = cli_main([
         "schedule", "add",
         "--when", "in 1m",
@@ -121,7 +121,7 @@ def test_schedule_add_event_and_request_mutually_exclusive(
 
 def test_schedule_add_custom_source(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("TEND_ROOT", str(tmp_path))
-    from tend.cli import main as cli_main
+    from tend._cli_legacy import main as cli_main
     from tend.cron_store import CronStore
 
     rc = cli_main([
