@@ -55,13 +55,12 @@ VOICE_RULES = (
 )
 
 
-def _skills_catalog_xml(skills_root: Path | None) -> str:
-    """Compact <available-skills> XML block built from installed SKILL.md
-    files. Empty string if no skills_root or no skills installed."""
-    if skills_root is None:
-        return ""
-    from tend.skills import enumerate_skills
-    skills = enumerate_skills(skills_root)
+def _skills_catalog_xml() -> str:
+    """Compact <available-skills> XML block built from the merged runtime catalog
+    (critical-skills in the wheel ∪ user skills in $TEND_HOME). Empty string if
+    no skills are installed."""
+    from tend.skills import enumerate_all_skills
+    skills = enumerate_all_skills()
     if not skills:
         return ""
     parts = ["<available-skills>"]
@@ -94,7 +93,6 @@ class Hub(BaseAgent):
         tts: TTSService,
         tts_sample_rate: int,
         brain: BaseAgent,
-        skills_root: Path | None = None,
         announcer=None,
     ):
         super().__init__(name, bus=bus)
@@ -103,7 +101,6 @@ class Hub(BaseAgent):
         self._tts = tts
         self._tts_sample_rate = tts_sample_rate
         self._brain = brain
-        self._skills_root = skills_root
         self._announcer = announcer
         self._context = LLMContext()
 
@@ -123,7 +120,7 @@ class Hub(BaseAgent):
 
     async def reset_session(self, soul_text: str) -> None:
         """Replace the LLMContext's messages with a fresh system prompt only."""
-        skills_xml = _skills_catalog_xml(self._skills_root)
+        skills_xml = _skills_catalog_xml()
         self._context.set_messages(
             [_build_system_prompt(soul_text, skills_xml)],
         )

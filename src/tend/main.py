@@ -222,7 +222,6 @@ async def _run() -> None:
         "hub", bus=runner.bus, settings=settings,
         stt=stt, tts=tts, tts_sample_rate=tts_rate,
         brain=brain, announcer=announcer,
-        skills_root=Path.home() / ".tend" / "skills",
     )
 
     session_manager = SessionManager(
