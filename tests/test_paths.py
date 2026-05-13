@@ -67,6 +67,12 @@ def test_user_side_paths_anchored(monkeypatch, tmp_path):
     assert version_marker_path() == tmp_path / ".tend-version"
 
 
+def test_skills_quarantine_root_under_tend_home(monkeypatch, tmp_path):
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    from tend import paths
+    assert paths.skills_quarantine_root() == tmp_path / "skills-quarantined"
+
+
 def test_read_soul_user_wins(monkeypatch, tmp_path):
     monkeypatch.setenv("TEND_HOME", str(tmp_path))
     (tmp_path / "soul.md").write_text("MY CUSTOM PERSONA", encoding="utf-8")
