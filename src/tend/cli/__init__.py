@@ -5,7 +5,7 @@ from __future__ import annotations
 import click
 import typer
 
-from tend.cli import sessions, skills
+from tend.cli import schedule, sessions, skills
 
 
 app = typer.Typer(
@@ -19,6 +19,7 @@ app = typer.Typer(
 )
 app.add_typer(sessions.app, name="sessions")
 app.add_typer(skills.app, name="skills")
+app.add_typer(schedule.app, name="schedule")
 app.command("scan-skill")(skills.scan_skill_command)
 
 
