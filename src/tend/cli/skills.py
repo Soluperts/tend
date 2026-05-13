@@ -181,6 +181,34 @@ def install(
     print(f"Installed: {', '.join(names)}")
 
 
+@app.command("validate")
+def validate(name: str = typer.Argument(..., help="Skill name.")) -> None:
+    """Validate frontmatter parse + safety scan. Exit codes match scan-skill."""
+    from tend.skills import SkillFrontmatterError, parse_frontmatter
+
+    name = validate_skill_name(name)
+    p = paths.user_skills_dir() / name / "SKILL.md"
+    if not p.is_file():
+        print(f"no skill named {name!r}", file=sys.stderr)
+        raise typer.Exit(code=3)
+
+    text = p.read_text(encoding="utf-8")
+
+    try:
+        parse_frontmatter(text)
+    except SkillFrontmatterError as e:
+        print(f"{name}: frontmatter invalid: {e}", file=sys.stderr)
+        raise typer.Exit(code=2)
+
+    report = scan_text(text)
+    if report.is_clean:
+        print(f"{name}: clean")
+        return
+    for f in report.findings:
+        print(f"  [{f.severity}] {f.rule} (line {f.line}): {f.snippet}")
+    raise typer.Exit(code=2 if report.is_critical else 1)
+
+
 def scan_skill_command(
     name: str = typer.Argument(..., help="Skill name (folder under $TEND_HOME/skills/)."),
 ) -> None:
