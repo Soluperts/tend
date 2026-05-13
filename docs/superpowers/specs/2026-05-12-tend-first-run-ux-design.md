@@ -170,8 +170,16 @@ Sequence:
    `tend service install` to make tend start at boot."
 
 Idempotent re-run: on each prompt, if the value is already set
-(env > keyring > .env), show it as `[bracketed]` placeholder; pressing
+(env > keyring > .env), show it as a `[bracketed]` placeholder; pressing
 Enter keeps it. This is questionary's native `default=...` shape.
+
+**Secret fields never echo the raw value.** For
+`ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY`, and
+`TEND_WEBHOOK_TOKEN`, the placeholder is `[set — press Enter to keep]`
+and the prompt is `questionary.password()` (mask while typing). The
+actual value is only read out of storage when the user provides a new
+one to replace it. Non-secret defaults (voice id, sleep phrase, etc.)
+echo normally.
 
 Skip lists for non-interactive use: `tend setup --noninteractive` runs
 through the flow but fails fast on any prompt where the value is unset.
