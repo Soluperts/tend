@@ -17,8 +17,12 @@ class ServiceFileExists(Exception):
     """Raised when install() would overwrite an existing unit file without force."""
 
 
+class ServiceNotInstalled(Exception):
+    """Raised when start/stop is called and no unit file exists."""
+
+
 class MacOSNotSupported(NotImplementedError):
-    """Raised when install/uninstall is called on macOS."""
+    """Raised when install/uninstall/start/stop/status is called on macOS."""
 
 
 def _is_macos() -> bool:
@@ -83,3 +87,60 @@ def uninstall() -> None:
         ["systemctl", "--user", "daemon-reload"],
         check=False,
     )
+
+
+def _require_installed_linux() -> None:
+    if _is_macos():
+        raise MacOSNotSupported(
+            "macOS service control is not yet implemented (sub-project #3)"
+        )
+    if not unit_path().exists():
+        raise ServiceNotInstalled(
+            f"no unit at {unit_path()}; run `tend service install` first"
+        )
+
+
+def start() -> int:
+    """`systemctl --user start tend`. Returns systemctl's return code."""
+    _require_installed_linux()
+    return subprocess.run(
+        ["systemctl", "--user", "start", "tend"],
+        check=False,
+    ).returncode
+
+
+def stop() -> int:
+    """`systemctl --user stop tend`. Returns systemctl's return code."""
+    _require_installed_linux()
+    return subprocess.run(
+        ["systemctl", "--user", "stop", "tend"],
+        check=False,
+    ).returncode
+
+
+def status() -> tuple[str, str]:
+    """Return (state, details).
+
+    state ∈ {active, inactive, failed, activating, deactivating, not-installed, unknown}.
+    details is a short multi-line summary from `systemctl status`, or empty.
+    """
+    if _is_macos():
+        raise MacOSNotSupported(
+            "macOS service control is not yet implemented (sub-project #3)"
+        )
+    if not unit_path().exists():
+        return ("not-installed", f"no unit at {unit_path()}")
+    r = subprocess.run(
+        ["systemctl", "--user", "is-active", "tend"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    state = (r.stdout or "").strip() or "unknown"
+    r2 = subprocess.run(
+        ["systemctl", "--user", "status", "tend", "--no-pager", "-n", "0"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return (state, (r2.stdout or "").strip())

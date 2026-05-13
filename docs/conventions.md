@@ -69,7 +69,7 @@ return (init, env, dotenv, toml, secrets)
 - Subcommand list (shipped):
   - `tend setup` — interactive bootstrap (writes `$TEND_HOME/{tend.toml,.env}`, prompts for secrets, auto-generates webhook token, installs optional skills).
   - `tend doctor [--json]` — read-only diagnostic; runs the same `tend.checks` library as setup. Exit 0 all-ok, 1 warn-only, 2 any-fail.
-  - `tend service install [--force]` / `tend service uninstall` — systemd user unit (Linux). macOS launchd is sub-project #3 (macOS port).
+  - `tend service {install [--force],uninstall,start,stop,status}` — systemd user unit (Linux). `status` exits 0 only when the unit is active, matching systemctl conventions. macOS launchd is sub-project #3 (macOS port).
   - `tend sessions {list,show,tail,cat}` — worker session history.
   - `tend skills {list,show,cat,rm,quarantined,new,install,validate,enable-triggers,disable-triggers}` — skill management (plural, matching `$TEND_HOME/skills/`).
   - `tend schedule {list,show,add,rm}` — cron store wrapper.

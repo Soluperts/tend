@@ -1,4 +1,4 @@
-"""`tend service install/uninstall` — systemd user-unit management."""
+"""`tend service install/uninstall/start/stop/status` — systemd user-unit management."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from tend import service as service_mod
 
 app = typer.Typer(
     no_args_is_help=True,
-    help="Install/uninstall the tend systemd service (Linux).",
+    help="Install and control the tend systemd service (Linux).",
 )
 
 
@@ -44,3 +44,49 @@ def uninstall() -> None:
         print(str(e), file=sys.stderr)
         raise typer.Exit(code=1)
     print("Removed tend.service unit file.")
+
+
+def _handle_control_errors(fn):
+    try:
+        return fn()
+    except service_mod.MacOSNotSupported as e:
+        print(str(e), file=sys.stderr)
+        raise typer.Exit(code=1)
+    except service_mod.ServiceNotInstalled as e:
+        print(str(e), file=sys.stderr)
+        raise typer.Exit(code=2)
+
+
+@app.command("start")
+def start() -> None:
+    """Start the tend systemd service (`systemctl --user start tend`)."""
+    rc = _handle_control_errors(service_mod.start)
+    raise typer.Exit(code=rc)
+
+
+@app.command("stop")
+def stop() -> None:
+    """Stop the tend systemd service (`systemctl --user stop tend`)."""
+    rc = _handle_control_errors(service_mod.stop)
+    raise typer.Exit(code=rc)
+
+
+@app.command("status")
+def status() -> None:
+    """Print the current state of the tend service.
+
+    Exits 0 only when the service is active, matching systemctl conventions.
+    """
+    from rich.console import Console
+    console = Console()
+    state, details = _handle_control_errors(service_mod.status)
+    color = {
+        "active": "green",
+        "inactive": "yellow",
+        "failed": "red",
+        "not-installed": "red",
+    }.get(state, "white")
+    console.print(f"[{color}]{state}[/{color}]")
+    if details:
+        console.print(details)
+    raise typer.Exit(code=0 if state == "active" else 1)
