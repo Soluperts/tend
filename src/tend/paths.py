@@ -101,3 +101,21 @@ def shipped_soul_md() -> Path:
 
 def shipped_workspace_bin() -> Path:
     return _materialize_defaults_root() / "workspace" / "bin"
+
+
+DEFAULT_SOUL_FALLBACK = (
+    "You are a helpful voice assistant. Keep replies brief, "
+    "conversational, plain prose."
+)
+
+
+def read_soul() -> str:
+    """Resolve the persona text: user soul.md → shipped soul.md → hardcoded fallback."""
+    user = soul_path()
+    if user.exists():
+        return user.read_text(encoding="utf-8")
+    shipped = shipped_soul_md()
+    try:
+        return shipped.read_text(encoding="utf-8")
+    except (OSError, FileNotFoundError):
+        return DEFAULT_SOUL_FALLBACK

@@ -65,3 +65,27 @@ def test_user_side_paths_anchored(monkeypatch, tmp_path):
     assert sessions_dir() == tmp_path / "sessions"
     assert skills_backup_root() == tmp_path / "skills-backup"
     assert version_marker_path() == tmp_path / ".tend-version"
+
+
+def test_read_soul_user_wins(monkeypatch, tmp_path):
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    (tmp_path / "soul.md").write_text("MY CUSTOM PERSONA", encoding="utf-8")
+    from tend.paths import read_soul
+    assert read_soul() == "MY CUSTOM PERSONA"
+
+
+def test_read_soul_shipped_fallback(monkeypatch, tmp_path):
+    """No user soul.md → falls back to the shipped one (the real one in _defaults)."""
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    from tend.paths import read_soul
+    text = read_soul()
+    assert "Tend" in text  # Shipped soul.md starts with "You are Tend, …"
+
+
+def test_read_soul_hardcoded_fallback(monkeypatch, tmp_path):
+    """If both user and shipped are missing, return the hardcoded fallback."""
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    from tend import paths
+    from tend.paths import read_soul, DEFAULT_SOUL_FALLBACK
+    monkeypatch.setattr(paths, "shipped_soul_md", lambda: tmp_path / "does-not-exist.md")
+    assert read_soul() == DEFAULT_SOUL_FALLBACK
