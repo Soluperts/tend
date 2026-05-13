@@ -10,6 +10,14 @@ Personal AI assistant for desk workers, running on a Raspberry Pi in the user's 
 - **Each unit testable in isolation.** Constructor injection. No module-level singletons. If you can't test a component without spinning up the whole pipeline, the boundary is wrong.
 - **Ask before adding deps.** New runtime dependencies need a real reason.
 
+## Conventions
+
+Cross-cutting standards — workspace paths, packaging, CLI structure, bootstrap UX, extension model, webhook security, releases, CI, repo furniture, distribution, macOS specifics, coding style, documentation — live in [`docs/conventions.md`](docs/conventions.md). Read it before making changes that touch any of those domains. If implementation diverges from the doc, fix one of them in the same PR — they're meant to stay in sync.
+
+## Roadmap
+
+Where tend is headed — the public-release critical path (v0.1), post-launch candidates, 1.0 stability criteria, and explicit non-goals — lives in [`ROADMAP.md`](ROADMAP.md). Read it when planning new features or estimating release scope. Update it when an item ships or a candidate gets accepted/rejected.
+
 ## Architecture (current)
 
 Two pipelines bridged by the in-process bus, matching the canonical pipecat-subagents shape.
