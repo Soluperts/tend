@@ -128,3 +128,12 @@ def test_enumerate_installable_excludes_installed(user_home, monkeypatch, tmp_pa
     from tend.skills import enumerate_installable_skills
     result = enumerate_installable_skills()
     assert sorted(s.name for s in result) == ["mail-triage", "weather"]
+
+
+def test_template_skill_not_enumerated(monkeypatch, tmp_path):
+    """The shipped _template scaffold must not appear in the user-facing
+    installable-skills list."""
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    from tend.skills import enumerate_installable_skills
+    names = [s.name for s in enumerate_installable_skills()]
+    assert "_template" not in names

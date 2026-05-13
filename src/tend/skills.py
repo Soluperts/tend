@@ -224,6 +224,8 @@ def enumerate_skills(root: Path) -> list[SkillInfo]:
     for child in sorted(root.iterdir()):
         if not child.is_dir():
             continue
+        if child.name.startswith((".", "_")):
+            continue
         skill_md = child / "SKILL.md"
         if not skill_md.is_file():
             continue
