@@ -89,3 +89,76 @@ def test_read_soul_hardcoded_fallback(monkeypatch, tmp_path):
     from tend.paths import read_soul, DEFAULT_SOUL_FALLBACK
     monkeypatch.setattr(paths, "shipped_soul_md", lambda: tmp_path / "does-not-exist.md")
     assert read_soul() == DEFAULT_SOUL_FALLBACK
+
+
+def test_write_then_read_version_marker(monkeypatch, tmp_path):
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    from tend.paths import write_version_marker, read_version_marker
+    write_version_marker("0.1.0")
+    assert read_version_marker() == "0.1.0"
+
+
+def test_read_version_marker_missing(monkeypatch, tmp_path):
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    from tend.paths import read_version_marker
+    assert read_version_marker() is None
+
+
+def test_write_version_marker_creates_parent(monkeypatch, tmp_path):
+    target = tmp_path / "deep" / "tree"
+    monkeypatch.setenv("TEND_HOME", str(target))
+    from tend.paths import write_version_marker, version_marker_path
+    write_version_marker("0.1.0")
+    assert version_marker_path().exists()
+
+
+def test_workspace_state_missing(monkeypatch, tmp_path):
+    target = tmp_path / "does-not-exist"
+    monkeypatch.setenv("TEND_HOME", str(target))
+    from tend.paths import detect_workspace_state, WorkspaceState
+    assert detect_workspace_state() == WorkspaceState.MISSING
+
+
+def test_workspace_state_unclaimed_when_populated(monkeypatch, tmp_path):
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    (tmp_path / "skills").mkdir()
+    (tmp_path / "skills" / "briefing").mkdir()
+    from tend.paths import detect_workspace_state, WorkspaceState
+    assert detect_workspace_state() == WorkspaceState.UNCLAIMED
+
+
+def test_workspace_state_unclaimed_when_empty(monkeypatch, tmp_path):
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    from tend.paths import detect_workspace_state, WorkspaceState
+    assert detect_workspace_state() == WorkspaceState.UNCLAIMED
+
+
+def test_workspace_state_initialized(monkeypatch, tmp_path):
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    from tend.paths import detect_workspace_state, WorkspaceState, write_version_marker
+    write_version_marker("0.1.0")
+    assert detect_workspace_state() == WorkspaceState.INITIALIZED
+
+
+def test_workspace_state_future(monkeypatch, tmp_path):
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    from tend.paths import detect_workspace_state, WorkspaceState, write_version_marker
+    write_version_marker("999.0.0")
+    assert detect_workspace_state() == WorkspaceState.FUTURE_VERSION
+
+
+def test_workspace_state_garbage_marker_is_unclaimed(monkeypatch, tmp_path):
+    """An unparseable marker is treated as unclaimed (lets setup fix it)."""
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    tmp_path.mkdir(exist_ok=True)
+    (tmp_path / ".tend-version").write_text("not-a-version", encoding="utf-8")
+    from tend.paths import detect_workspace_state, WorkspaceState
+    assert detect_workspace_state() == WorkspaceState.UNCLAIMED
+
+
+def test_migrate_workspace_noop_same_version(monkeypatch, tmp_path):
+    """Migration from current → current is a no-op."""
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    from tend.paths import migrate_workspace
+    migrate_workspace(from_version="0.1.0", to_version="0.1.0")
+    assert list(tmp_path.iterdir()) == []

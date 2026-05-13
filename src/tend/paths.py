@@ -119,3 +119,61 @@ def read_soul() -> str:
         return shipped.read_text(encoding="utf-8")
     except (OSError, FileNotFoundError):
         return DEFAULT_SOUL_FALLBACK
+
+
+def read_version_marker() -> str | None:
+    """Return the workspace's .tend-version contents, or None if absent."""
+    p = version_marker_path()
+    if not p.exists():
+        return None
+    return p.read_text(encoding="utf-8").strip()
+
+
+def write_version_marker(version: str) -> None:
+    """Write .tend-version, creating $TEND_HOME if missing."""
+    p = version_marker_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(version, encoding="utf-8")
+
+
+from enum import Enum
+from packaging.version import InvalidVersion, Version
+
+
+class WorkspaceState(Enum):
+    MISSING = "missing"
+    UNCLAIMED = "unclaimed"
+    INITIALIZED = "initialized"
+    FUTURE_VERSION = "future_version"
+
+
+def _current_tend_version() -> Version:
+    from tend import __version__
+    return Version(__version__)
+
+
+def detect_workspace_state() -> WorkspaceState:
+    """Classify the current $TEND_HOME for boot-time gating."""
+    home = tend_home()
+    if not home.exists():
+        return WorkspaceState.MISSING
+    marker = read_version_marker()
+    if marker is None:
+        return WorkspaceState.UNCLAIMED
+    try:
+        marker_version = Version(marker)
+    except InvalidVersion:
+        return WorkspaceState.UNCLAIMED
+    if marker_version > _current_tend_version():
+        return WorkspaceState.FUTURE_VERSION
+    return WorkspaceState.INITIALIZED
+
+
+def migrate_workspace(from_version: str, to_version: str) -> None:
+    """Apply any required workspace-layout migrations between two tend versions.
+
+    For v0.1 this is a no-op. When v0.2 ships a layout change, branch on
+    from_version here and apply the migration. Called from boot when
+    .tend-version < current.
+    """
+    return
