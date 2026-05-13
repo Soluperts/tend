@@ -89,6 +89,10 @@ def skills_backup_root() -> Path:
     return tend_home() / "skills-backup"
 
 
+def skills_quarantine_root() -> Path:
+    return tend_home() / "skills-quarantined"
+
+
 def version_marker_path() -> Path:
     return tend_home() / ".tend-version"
 

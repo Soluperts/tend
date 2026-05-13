@@ -109,8 +109,8 @@ async def test_cancel_schedule_unknown(brain, scheduler):
 
 async def test_enable_skill_triggers_copies_into_scheduler(brain, scheduler, tmp_path, monkeypatch):
     # Seed a skill with two triggers.
-    skill_dir = tmp_path / "meal-plan"
-    skill_dir.mkdir()
+    skill_dir = tmp_path / "skills" / "meal-plan"
+    skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
         "---\n"
         "name: meal-plan\n"
@@ -125,7 +125,7 @@ async def test_enable_skill_triggers_copies_into_scheduler(brain, scheduler, tmp
         "---\nbody\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TEND_SKILLS_ROOT", str(tmp_path))
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
 
     # find_by_source returns nothing the first time (no prior copies)
     scheduler.find_by_source = MagicMock(return_value=[])
@@ -139,8 +139,8 @@ async def test_enable_skill_triggers_copies_into_scheduler(brain, scheduler, tmp
 
 
 async def test_enable_skill_triggers_idempotent_replaces_existing(brain, scheduler, tmp_path, monkeypatch):
-    skill_dir = tmp_path / "x"
-    skill_dir.mkdir()
+    skill_dir = tmp_path / "skills" / "x"
+    skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
         "---\n"
         "name: x\ndescription: y\n"
@@ -148,7 +148,7 @@ async def test_enable_skill_triggers_idempotent_replaces_existing(brain, schedul
         "---\nbody\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TEND_SKILLS_ROOT", str(tmp_path))
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
 
     old1 = MagicMock()
     old1.id = "old1"
@@ -176,13 +176,13 @@ async def test_disable_skill_triggers_removes_only_matching_source(brain, schedu
 
 
 async def test_enable_skill_triggers_no_triggers_returns_message(brain, scheduler, tmp_path, monkeypatch):
-    skill_dir = tmp_path / "bare"
-    skill_dir.mkdir()
+    skill_dir = tmp_path / "skills" / "bare"
+    skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
         "---\nname: bare\ndescription: y\n---\nbody\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TEND_SKILLS_ROOT", str(tmp_path))
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
     scheduler.find_by_source = MagicMock(return_value=[])
     p = _params()
     await brain.enable_skill_triggers(p, skill="bare")
