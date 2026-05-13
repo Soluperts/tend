@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Move tend from "runs only from a git clone" to "fully pip-installable." User state moves into `$TEND_HOME` (default `~/.config/tend/`); shipped defaults move into the wheel at `src/tend/_defaults/`; a `.tend-version` marker indicates an initialized workspace.
+**Goal:** Move tend from "runs only from a git clone" to "fully pip-installable." User state moves into `$TEND_HOME` (default `~/.tend/`); shipped defaults move into the wheel at `src/tend/_defaults/`; a `.tend-version` marker indicates an initialized workspace.
 
 **Architecture:** A new `src/tend/paths.py` module centralizes every filesystem path. Shipped content (`heartbeat` + `schedule-watcher` as critical, plus 7 optional skills, `workspace/bin/` helpers, and `soul.md`) moves under `src/tend/_defaults/`. Critical skills stay in the wheel and are runtime-enumerated alongside `$TEND_HOME/skills/`, with user dir winning on name collision. Optional skills are copied to `$TEND_HOME/skills/` during `tend setup` (the wizard UX is sub-project #4 — this plan only implements the underlying primitives).
 
@@ -79,7 +79,7 @@ import pytest
 def test_tend_home_default(monkeypatch):
     monkeypatch.delenv("TEND_HOME", raising=False)
     from tend.paths import tend_home
-    assert tend_home() == Path.home() / ".config" / "tend"
+    assert tend_home() == Path.home() / ".tend"
 
 
 def test_tend_home_env_override(monkeypatch, tmp_path):
@@ -113,7 +113,7 @@ Create `src/tend/paths.py`:
 
 Resolution order for the workspace root:
 1. `$TEND_HOME` env var (no expansion of ~ — taken literally).
-2. `~/.config/tend/` (cross-platform default; macOS too).
+2. `~/.tend/` (cross-platform default; macOS too).
 
 All other path functions are anchored at `tend_home()` (user-side) or at the
 wheel's `_defaults/` directory (shipped-side) via `importlib.resources`.
@@ -130,7 +130,7 @@ def tend_home() -> Path:
     override = os.environ.get("TEND_HOME")
     if override:
         return Path(override)
-    return Path.home() / ".config" / "tend"
+    return Path.home() / ".tend"
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -2666,14 +2666,14 @@ systemctl --user stop tend 2>/dev/null || true
 - [ ] **Step 2: Move the existing workspace into the new location**
 
 ```bash
-mv ~/.tend ~/.config/tend
+mv ~/.tend ~/.tend
 ```
 
 - [ ] **Step 3: Remove the now-obsolete heartbeat and schedule-watcher user copies**
 
 ```bash
-rm -rf ~/.config/tend/skills/heartbeat
-rm -rf ~/.config/tend/skills/schedule-watcher
+rm -rf ~/.tend/skills/heartbeat
+rm -rf ~/.tend/skills/schedule-watcher
 ```
 
 - [ ] **Step 4: Carry over the maintainer's `tend.toml` dev tweaks**
@@ -2683,7 +2683,7 @@ cd /home/pi/hasat  # or wherever the repo clone is
 # The repo's tend.toml is being deleted in task 32 below;
 # move the maintainer's local edits into the workspace first.
 if [ -f tend.toml ]; then
-  mv tend.toml ~/.config/tend/tend.toml
+  mv tend.toml ~/.tend/tend.toml
 fi
 ```
 
@@ -2703,7 +2703,7 @@ tend setup
 (The wizard from sub-project #4 isn't built yet, so for now manually create the marker:)
 
 ```bash
-echo "0.1.0" > ~/.config/tend/.tend-version
+echo "0.1.0" > ~/.tend/.tend-version
 ```
 
 - [ ] **Step 7: Smoke test**
@@ -2738,7 +2738,7 @@ Listen for "tend starting" + normal pipeline construction.
 ls tend.toml 2>/dev/null && echo "exists — need to delete" || echo "already gone"
 ```
 
-If the maintainer moved it to `~/.config/tend/tend.toml` during task 30, this file may already be gone. If it's still here (e.g., a clean clone), delete it.
+If the maintainer moved it to `~/.tend/tend.toml` during task 30, this file may already be gone. If it's still here (e.g., a clean clone), delete it.
 
 - [ ] **Step 2: Delete and commit**
 

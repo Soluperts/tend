@@ -46,15 +46,15 @@ The Piper voice (`en_US-ryan-high.onnx`) is downloaded by Pipecat on first use.
 
 ## Configure
 
-tend's user state lives at `$TEND_HOME` (default `~/.config/tend/`). On first run, populate it with the shipped defaults via `tend setup` (interactive bootstrap — lands in sub-project #4). For now, the minimal flow is:
+tend's user state lives at `$TEND_HOME` (default `~/.tend/`). On first run, populate it with the shipped defaults via `tend setup` (interactive bootstrap — lands in sub-project #4). For now, the minimal flow is:
 
 ```bash
-mkdir -p ~/.config/tend
-echo "ANTHROPIC_API_KEY=sk-ant-..." > ~/.config/tend/.env
-echo "0.1.0" > ~/.config/tend/.tend-version
+mkdir -p ~/.tend
+echo "ANTHROPIC_API_KEY=sk-ant-..." > ~/.tend/.env
+echo "0.1.0" > ~/.tend/.tend-version
 ```
 
-Optional overrides go in `~/.config/tend/tend.toml`:
+Optional overrides go in `~/.tend/tend.toml`:
 
 ```toml
 llm_model = "claude-opus-4-7"

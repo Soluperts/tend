@@ -6,7 +6,7 @@ These were derived from a review of comparable tools (uv, ruff, gh, llm, ollama,
 
 ## Workspace and paths
 
-- **`$TEND_HOME`** is the single user-state root. Default: `~/.config/tend/` on both Linux and macOS. (Yes, macOS too — `~/Library/Application Support` is shell-hostile and the community has moved away from it; ruff explicitly deprecated the macOS path in v0.5.0.)
+- **`$TEND_HOME`** is the single user-state root. Default: `~/.tend/` on both Linux and macOS. Single-folder dotdir convention — same shape as `~/.ollama/`, `~/.docker/`, `~/.terraform.d/`. We deliberately don't use `~/.config/tend/`: XDG reserves `~/.config/` for config files, but tend has a real workspace (skills, scripts, persona, state) that doesn't fit there cleanly.
 - **Cache** via `platformdirs.user_cache_dir("tend")` → `~/.cache/tend` / `~/Library/Caches/tend`.
 - **State** (job state, sessions) via `platformdirs.user_state_dir("tend")`.
 - **Logs** via `platformdirs.user_log_dir("tend")`. Replaces `/tmp/tend.log`.
@@ -54,7 +54,7 @@ toml = TomlConfigSettingsSource(
     settings_cls,
     toml_file=[
         files("tend._defaults") / "tend.toml",
-        Path(os.environ.get("TEND_HOME") or Path.home() / ".config" / "tend") / "tend.toml",
+        Path(os.environ.get("TEND_HOME") or Path.home() / ".tend") / "tend.toml",
     ],
 )
 return (init, env, dotenv, toml, secrets)

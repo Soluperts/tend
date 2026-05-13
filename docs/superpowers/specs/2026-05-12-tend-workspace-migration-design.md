@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make `pip install tend && tend setup && tend` work. Today, tend reads `tend.toml`, `soul.md`, and the `skills/` directory from the current working directory (which only resolves correctly when running from a git clone), and seeds skills from `Path(__file__).parents[2] / "skills"` (which only resolves inside the repo, not inside a site-packages install). After this change, tend is a fully pip-installable package whose user state lives in `$TEND_HOME` (default `~/.config/tend/`), and whose default content (persona, seed skills, helper scripts) ships inside the wheel.
+Make `pip install tend && tend setup && tend` work. Today, tend reads `tend.toml`, `soul.md`, and the `skills/` directory from the current working directory (which only resolves correctly when running from a git clone), and seeds skills from `Path(__file__).parents[2] / "skills"` (which only resolves inside the repo, not inside a site-packages install). After this change, tend is a fully pip-installable package whose user state lives in `$TEND_HOME` (default `~/.tend/`), and whose default content (persona, seed skills, helper scripts) ships inside the wheel.
 
 This is the prerequisite for sub-projects #3 (Typer CLI migration), #4 (first-run UX), and #5 (macOS port) in `ROADMAP.md`.
 
@@ -21,14 +21,14 @@ Without fixing these, publishing a public release means publishing something tha
 
 ## Decisions made during brainstorming
 
-1. **Single-folder workspace.** All user-touchable state lives under `$TEND_HOME` (default `~/.config/tend/` on Linux and macOS). No platformdirs split between config/data/state/cache/logs. One env var collapses or relocates everything. Logs go under `$TEND_HOME/logs/`. (Section 1.)
+1. **Single-folder workspace.** All user-touchable state lives under `$TEND_HOME` (default `~/.tend/` on Linux and macOS). No platformdirs split between config/data/state/cache/logs. One env var collapses or relocates everything. Logs go under `$TEND_HOME/logs/`. (Section 1.)
 2. **Two-tier shipping.** A small set of "critical" skills (`heartbeat`, `schedule-watcher`) lives inside the wheel and is enumerated at runtime from there — never copied to the user workspace. Optional shipped skills (`briefing`, `mail-triage`, `meeting-prep`, etc.) also live in the wheel, and are copied into the workspace during `tend setup` based on user selection. (Sections 2, 4.)
 3. **Workspace is fully user-owned.** Once installed in `$TEND_HOME/skills/<name>/`, a skill is the user's to edit, delete, or fork. No "fork before edit" friction. (Sections 2, 3.)
 4. **Destructive updates with a single rolling backup.** `tend skill update` overwrites user-edited skills, but always backs them up first to `$TEND_HOME/skills-backup/`. Single rolling snapshot, not timestamped history — keeps the workspace tidy. (Section 5.)
 5. **No shipped `tend.toml`.** Python class defaults on `Settings` are the authoritative baseline. The user's `$TEND_HOME/tend.toml` is the only TOML loaded at runtime, written by `tend setup` with their selections. (Section 6.)
 6. **`.tend-version` marker** at the workspace root is the "is this workspace initialized?" signal. `tend` (no args) refuses to boot if it's missing. (Section 3.)
 7. **`tend setup` handles all three workspace states.** Missing → fresh wizard. Populated-but-unclaimed → adopt mode (treats existing files as authoritative). Initialized → amend mode (bracketed-default prompts). No special `--claim` flag. (Section 3.)
-8. **No separate migration doc.** The maintainer's one-time `~/.tend/` → `~/.config/tend/` move is part of the implementation work, executed during deployment. (Section 7.)
+8. **No separate migration doc.** The maintainer's one-time `~/.tend/` → `~/.tend/` move is part of the implementation work, executed during deployment. (Section 7.)
 
 ## Design
 
@@ -40,7 +40,7 @@ A new `src/tend/paths.py` module is the single source of truth for every filesys
 # src/tend/paths.py
 
 def tend_home() -> Path:
-    return Path(os.environ.get("TEND_HOME") or Path.home() / ".config" / "tend")
+    return Path(os.environ.get("TEND_HOME") or Path.home() / ".tend")
 
 # User-side (anchored at tend_home())
 def user_skills_dir() -> Path: ...      # $TEND_HOME/skills/
@@ -65,7 +65,7 @@ def shipped_workspace_bin() -> Path: ...
 def read_soul() -> str: ...             # user → shipped → embedded fallback
 ```
 
-**Default location:** `~/.config/tend/` on both Linux and macOS. Override: set `$TEND_HOME` to any absolute path. No `$XDG_CONFIG_HOME` respect — one knob, one source of truth, no surprises.
+**Default location:** `~/.tend/` on both Linux and macOS. Override: set `$TEND_HOME` to any absolute path. No `$XDG_CONFIG_HOME` respect — one knob, one source of truth, no surprises.
 
 **Dev mode:** running tend from a clone uses `TEND_HOME=$PWD/.tend-dev` in the dev shell. No auto-detection. `.tend-dev/` goes in `.gitignore`.
 
@@ -249,7 +249,7 @@ The following new skills are available to install:
   + weather
 
 A backup of overwritten skills will be saved to:
-  /home/pi/.config/tend/skills-backup/
+  /home/pi/.tend/skills-backup/
 
 ⚠ This replaces any previous backup (last one taken 2026-05-12T14:30:00).
   If you need the previous backup, move it elsewhere first.
@@ -368,9 +368,9 @@ def read_soul() -> str:
 
   ```bash
   systemctl --user stop tend 2>/dev/null || true
-  mv ~/.tend ~/.config/tend
-  rm -rf ~/.config/tend/skills/heartbeat ~/.config/tend/skills/schedule-watcher
-  mv tend.toml ~/.config/tend/tend.toml
+  mv ~/.tend ~/.tend
+  rm -rf ~/.tend/skills/heartbeat ~/.tend/skills/schedule-watcher
+  mv tend.toml ~/.tend/tend.toml
   pipx install -e .   # or whichever install command we settle on
   tend setup          # adopt mode kicks in; writes .tend-version
   systemctl --user start tend
@@ -381,7 +381,7 @@ These steps live in the implementation plan (`docs/superpowers/plans/...`), not 
 **Testing strategy:**
 
 - **`tests/test_paths.py`** — unit tests on `paths.py`:
-  - `test_tend_home_default` — env unset → `~/.config/tend`
+  - `test_tend_home_default` — env unset → `~/.tend`
   - `test_tend_home_env_override` — `TEND_HOME=/tmp/x` honored
   - `test_user_skills_dir_anchored` — derived correctly from `tend_home()`
   - `test_critical_skills_dir_returns_real_path` — works even with wheel zipped
@@ -417,7 +417,7 @@ These steps live in the implementation plan (`docs/superpowers/plans/...`), not 
 - **Setup wizard UX** (Typer subcommands, questionary prompts, audio device picker, smoke-test flow) → sub-project #4 (First-run UX).
 - **Service install** (systemd user unit, launchd plist generation) → sub-project #4.
 - **`tend skill {list,install,update}` and `tend workspace …` Typer wiring** — this spec defines their *behavior contracts*; the actual CLI wiring lands with sub-projects #3 (Typer migration) and #4.
-- **macOS-specific path handling** — the same `~/.config/tend/` default applies cross-platform; TCC + launchd are sub-project #5.
+- **macOS-specific path handling** — the same `~/.tend/` default applies cross-platform; TCC + launchd are sub-project #5.
 - **Webhook auth changes** — sub-project #6.
 
 **What this spec does establish:** every primitive the other sub-projects depend on — `paths.tend_home()`, `paths.user_skills_dir()`, `paths.critical_skills_dir()`, `paths.read_soul()`, `enumerate_all_skills()`, `find_event_subscribers_all()`, `enumerate_installable_skills()`, the `.tend-version` marker semantics, and the backup directory layout. Once this lands, #3-#6 can proceed in any order without dependency conflicts.

@@ -2,7 +2,13 @@
 
 Resolution order for the workspace root:
 1. ``$TEND_HOME`` env var (taken literally — no ~ expansion).
-2. ``~/.config/tend/`` (cross-platform default; macOS too).
+2. ``~/.tend/`` (cross-platform default; macOS too).
+
+This is a single-folder workspace — config + persona + skills + state +
+logs all under one dotdir. Same shape as ``~/.ollama/`` or ``~/.docker/``.
+We deliberately don't use ``~/.config/tend/``: XDG reserves ``~/.config/``
+for config files, but tend has a real workspace (skills, scripts, state)
+that would mis-fit there.
 
 User-side functions are anchored at :func:`tend_home`. Wheel-side functions
 read from the package's ``_defaults/`` tree via ``importlib.resources``.
@@ -40,7 +46,7 @@ def tend_home() -> Path:
     override = os.environ.get("TEND_HOME")
     if override:
         return Path(override)
-    return Path.home() / ".config" / "tend"
+    return Path.home() / ".tend"
 
 
 def user_skills_dir() -> Path:

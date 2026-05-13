@@ -8,7 +8,7 @@ from pathlib import Path
 def test_tend_home_default(monkeypatch):
     monkeypatch.delenv("TEND_HOME", raising=False)
     from tend.paths import tend_home
-    assert tend_home() == Path.home() / ".config" / "tend"
+    assert tend_home() == Path.home() / ".tend"
 
 
 def test_tend_home_env_override(monkeypatch, tmp_path):
