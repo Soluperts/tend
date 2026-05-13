@@ -250,6 +250,39 @@ def find_event_subscribers(root: Path, kind: str) -> list[SkillInfo]:
     return [s for s in enumerate_skills(root) if kind in s.events]
 
 
+def enumerate_all_skills() -> list[SkillInfo]:
+    """Runtime catalog: critical skills (wheel) ∪ user skills, user wins on collision."""
+    from tend import paths
+
+    critical = enumerate_skills(paths.critical_skills_dir())
+    user = enumerate_skills(paths.user_skills_dir())
+
+    by_name: dict[str, SkillInfo] = {s.name: s for s in critical}
+    for s in user:
+        if s.name in by_name:
+            logger.warning(
+                f"user skill {s.name!r} at {s.path} shadows critical skill "
+                f"at {by_name[s.name].path}"
+            )
+        by_name[s.name] = s
+
+    return sorted(by_name.values(), key=lambda s: s.name)
+
+
+def find_event_subscribers_all(kind: str) -> list[SkillInfo]:
+    """All skills in the merged runtime catalog whose ``events:`` list includes ``kind``."""
+    return [s for s in enumerate_all_skills() if kind in s.events]
+
+
+def enumerate_installable_skills() -> list[SkillInfo]:
+    """Shipped optional skills not yet present in the user's $TEND_HOME/skills/."""
+    from tend import paths
+
+    shipped = enumerate_skills(paths.shipped_skills_dir())
+    user_names = {s.name for s in enumerate_skills(paths.user_skills_dir())}
+    return [s for s in shipped if s.name not in user_names]
+
+
 def format_catalog_xml(skills: list[SkillInfo]) -> str:
     """Render the <available-skills> XML block for the worker prompt.
 

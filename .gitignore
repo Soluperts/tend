@@ -23,3 +23,6 @@ tend.faults.log
 
 # Piper voice files (downloaded by Pipecat)
 *.onnx.json
+
+# Dev-mode TEND_HOME location (set with TEND_HOME=$PWD/.tend-dev)
+.tend-dev/

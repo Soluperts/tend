@@ -2,16 +2,18 @@
 
 Boot order:
 1. Configure logging (loguru + faulthandler).
-2. Load Settings from class defaults / tend.toml / .env / env vars.
-3. Run cloud preflights; build STT, TTS, Brain LLM (with local fallbacks).
-4. Construct AgentRunner, ProactiveAnnouncer, Scheduler, GeneralWorker, Brain
+2. Load Settings from class defaults / $TEND_HOME/tend.toml / $TEND_HOME/.env / env vars.
+3. Check the workspace state via paths.detect_workspace_state(); bail with
+   a setup hint if missing / unclaimed / from a future version.
+4. Run cloud preflights; build STT, TTS, Brain LLM (with local fallbacks).
+5. Construct AgentRunner, ProactiveAnnouncer, Scheduler, GeneralWorker, Brain
    (with general_worker=general), SessionManager, Hub, WebhookServer.
-5. SessionManager.start() loads soul.md and triggers the first reset_session.
-6. Hub and Scheduler are added as top-level agents. Hub adds Brain as a child
+6. SessionManager.start() loads soul.md and triggers the first reset_session.
+7. Hub and Scheduler are added as top-level agents. Hub adds Brain as a child
    on_ready. Brain.on_ready registers GeneralWorker on the (now-live) bus.
    Scheduler.on_ready fires missed at-jobs then starts the loop.
-7. Seed heartbeat skill + heartbeat job (idempotent on subsequent boots).
-8. runner.run() — listens forever. WebhookServer starts before the loop and
+8. Seed the heartbeat job (idempotent on subsequent boots).
+9. runner.run() — listens forever. WebhookServer starts before the loop and
    stops in a finally block.
 """
 
@@ -20,15 +22,15 @@ from __future__ import annotations
 import asyncio
 import faulthandler
 import sys
-from pathlib import Path
 
 from loguru import logger
 from pipecat_subagents.runner import AgentRunner
 
+from tend import paths
 from tend.announcer import ProactiveAnnouncer
 from tend.audio.hub import Hub
 from tend.brain import Brain
-from tend.config import Settings, WorkerConfig, settings
+from tend.config import WorkerConfig, settings
 from tend.cron_store import CronStore
 from tend.preflight import claude_cli_preflight
 from tend.scheduler import Scheduler
@@ -42,94 +44,16 @@ from tend.workers.general import GeneralWorker
 def _setup_logging() -> None:
     logger.remove()
     logger.add(sys.stderr, level="INFO")
-    logger.add(settings.log_path, level="DEBUG", rotation="5 MB", retention=2)
-    fault_path = settings.log_path.replace(".log", ".faults.log")
-    fault_file = open(fault_path, "a", buffering=1)
+
+    log_target = paths.log_path()
+    log_target.parent.mkdir(parents=True, exist_ok=True)
+    logger.add(str(log_target), level="DEBUG", rotation="5 MB", retention=2)
+
+    fault_target = paths.fault_log_path()
+    fault_target.parent.mkdir(parents=True, exist_ok=True)
+    fault_file = open(fault_target, "a", buffering=1)
     fault_file.write("\n--- tend start ---\n")
     faulthandler.enable(file=fault_file, all_threads=True)
-
-
-# ---------------------------------------------------------------------------
-# Heartbeat skill seeding
-# ---------------------------------------------------------------------------
-
-HEARTBEAT_SKILL_BODY = """\
----
-name: heartbeat
-description: Periodic silent check-in. Review pending work and announce only when something genuinely needs the user's attention.
-silent_default: true
----
-
-# Heartbeat
-
-You are running on the heartbeat tick. By default, exit silently.
-
-Only announce if there is something the user genuinely wants to know
-right now and would not have heard otherwise. Examples that justify an
-announcement: a follow-up deadline arrived, a long-running task you
-started earlier finished while the user was away.
-
-If you have nothing worth surfacing, end your run with the literal
-phrase "(nothing to surface)" as your last assistant message.
-"""
-
-
-def _seed_heartbeat_skill() -> None:
-    target = Path.home() / ".tend" / "skills" / "heartbeat" / "SKILL.md"
-    if target.exists():
-        return
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(HEARTBEAT_SKILL_BODY, encoding="utf-8")
-
-
-_REPO_SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
-
-REPO_SKILL_NAMES = (
-    "schedule-watcher",
-    "briefing",
-    "meeting-prep",
-    "mail-triage",
-    "routine-setup",
-    "schedule-block",
-    "lunch-prep",
-    "post-deep-work",
-)
-
-
-def _seed_skill_from_repo(skill_dir: Path) -> None:
-    """Copy a repo-shipped skill into ~/.tend/skills/<name>/ if not
-    already present. Idempotent: never overwrites a skill the user has
-    edited."""
-    target = Path.home() / ".tend" / "skills" / skill_dir.name
-    if target.exists():
-        return
-    import shutil
-    shutil.copytree(skill_dir, target)
-    logger.info(f"seeded skill {skill_dir.name}")
-
-
-_REPO_WORKSPACE_BIN = (
-    Path(__file__).resolve().parents[2] / "workspace" / "bin"
-)
-
-
-def _seed_workspace_bin() -> None:
-    """Copy repo workspace/bin/ scripts into ~/.tend/workspace/bin/.
-    Per-file: never overwrite existing scripts (user may have edited).
-    """
-    target = Path.home() / ".tend" / "workspace" / "bin"
-    target.mkdir(parents=True, exist_ok=True)
-    if not _REPO_WORKSPACE_BIN.exists():
-        return
-    import shutil
-    for src in _REPO_WORKSPACE_BIN.iterdir():
-        if not src.is_file():
-            continue
-        dst = target / src.name
-        if dst.exists():
-            continue
-        shutil.copy2(src, dst)
-        dst.chmod(0o755)
 
 
 def _seed_heartbeat_job(scheduler: Scheduler, every: str) -> None:
@@ -157,8 +81,8 @@ async def _run() -> None:
     runner = AgentRunner()
 
     claude_cli_preflight()  # logs warning on failure; non-fatal
-    store = SessionStore(root=Path.home() / ".tend")
-    cron_store = CronStore(root=Path.home() / ".tend")
+    store = SessionStore(root=paths.tend_home())
+    cron_store = CronStore(root=paths.tend_home())
 
     llm_service = _make_brain_llm(settings)
     if llm_service is None:
@@ -196,7 +120,6 @@ async def _run() -> None:
         dispatch=lambda target, payload: scheduler.request_task(
             target, payload=payload,
         ),
-        skills_root=Path.home() / ".tend" / "skills",
         default_tz=settings.timezone or "UTC",
         missed_at_policy=settings.scheduler.missed_at_policy,
     )
@@ -222,24 +145,16 @@ async def _run() -> None:
         "hub", bus=runner.bus, settings=settings,
         stt=stt, tts=tts, tts_sample_rate=tts_rate,
         brain=brain, announcer=announcer,
-        skills_root=Path.home() / ".tend" / "skills",
     )
 
     session_manager = SessionManager(
         brain=brain,
         hub=hub,
-        soul_path=settings.soul_path,
         reset_time=settings.daily_reset_time,
         timezone=settings.timezone,
     )
     brain.attach_session_manager(session_manager)
     await session_manager.start()
-
-    # Seed heartbeat skill on first boot if missing.
-    _seed_heartbeat_skill()
-    for name in REPO_SKILL_NAMES:
-        _seed_skill_from_repo(_REPO_SKILLS_DIR / name)
-    _seed_workspace_bin()
 
     # Webhook server — start before runner.run() so it is ready immediately.
     webhook_app = build_app(
@@ -248,7 +163,6 @@ async def _run() -> None:
         dispatch=lambda target, payload: scheduler.request_task(
             target, payload=payload,
         ),
-        skills_root=Path.home() / ".tend" / "skills",
     )
     webhook_server = WebhookServer(
         host=settings.webhook.host,
@@ -268,7 +182,34 @@ async def _run() -> None:
 
 def main() -> None:
     _setup_logging()
-    logger.info(f"tend starting (log: {settings.log_path})")
+
+    state = paths.detect_workspace_state()
+    if state == paths.WorkspaceState.MISSING:
+        print(
+            f"No workspace at {paths.tend_home()}.\n"
+            f"Run `tend setup` to initialize one.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if state == paths.WorkspaceState.UNCLAIMED:
+        print(
+            f"Workspace at {paths.tend_home()} has files but isn't initialized.\n"
+            f"Run `tend setup` to adopt it.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if state == paths.WorkspaceState.FUTURE_VERSION:
+        from tend import __version__
+        print(
+            f"Workspace at {paths.tend_home()} was written by tend "
+            f"{paths.read_version_marker()}.\n"
+            f"You're running tend {__version__}. Upgrade tend or pick a different "
+            f"TEND_HOME.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    logger.info(f"tend starting (log: {paths.log_path()})")
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:

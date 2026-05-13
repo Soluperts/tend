@@ -7,12 +7,11 @@ each via the GeneralWorker.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Awaitable, Callable
 
 from loguru import logger
 
-from tend.skills import find_event_subscribers
+from tend.skills import find_event_subscribers_all
 
 
 async def dispatch_event(
@@ -20,15 +19,17 @@ async def dispatch_event(
     kind: str,
     payload: dict,
     dispatch: Callable[[str, dict], Awaitable[None]],
-    skills_root: Path,
 ) -> list[str]:
     """Find skills subscribed to `kind` and dispatch them via `dispatch`.
+
+    Reads subscribers from the merged runtime catalog (critical-skills ∪
+    user skills) — see `tend.skills.find_event_subscribers_all`.
 
     Returns the list of skill names that were dispatched. Empty list is
     not an error — it means no skill subscribes to this kind.
     """
     try:
-        matches = find_event_subscribers(skills_root, kind)
+        matches = find_event_subscribers_all(kind)
     except Exception:
         logger.exception("event dispatch failed listing subscribers")
         matches = []

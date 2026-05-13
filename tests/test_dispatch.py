@@ -21,18 +21,29 @@ def _seed_skill(root: Path, name: str, events: list[str]) -> None:
     )
 
 
-async def test_dispatch_event_routes_to_each_subscriber(tmp_path):
+@pytest.fixture
+def isolated_workspace(monkeypatch, tmp_path):
+    """Redirect $TEND_HOME to tmp_path and empty out critical-skills."""
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    empty_critical = tmp_path / "_empty_critical"
+    empty_critical.mkdir()
+    from tend import paths
+    monkeypatch.setattr(paths, "critical_skills_dir", lambda: empty_critical)
+    return tmp_path
+
+
+async def test_dispatch_event_routes_to_each_subscriber(isolated_workspace):
     from tend.dispatch import dispatch_event
-    _seed_skill(tmp_path, "skill-a", ["lunch.upcoming"])
-    _seed_skill(tmp_path, "skill-b", ["lunch.upcoming", "deep-work.ended"])
-    _seed_skill(tmp_path, "skill-c", ["other.event"])
+    skills_root = isolated_workspace / "skills"
+    _seed_skill(skills_root, "skill-a", ["lunch.upcoming"])
+    _seed_skill(skills_root, "skill-b", ["lunch.upcoming", "deep-work.ended"])
+    _seed_skill(skills_root, "skill-c", ["other.event"])
     dispatch = AsyncMock()
 
     names = await dispatch_event(
         kind="lunch.upcoming",
         payload={"event_id": "x"},
         dispatch=dispatch,
-        skills_root=tmp_path,
     )
 
     assert sorted(names) == ["skill-a", "skill-b"]
@@ -45,16 +56,16 @@ async def test_dispatch_event_routes_to_each_subscriber(tmp_path):
     assert {p["skill"] for p in payloads} == {"skill-a", "skill-b"}
 
 
-async def test_dispatch_event_returns_empty_when_no_subscribers(tmp_path):
+async def test_dispatch_event_returns_empty_when_no_subscribers(isolated_workspace):
     from tend.dispatch import dispatch_event
-    _seed_skill(tmp_path, "skill-a", ["other.event"])
+    skills_root = isolated_workspace / "skills"
+    _seed_skill(skills_root, "skill-a", ["other.event"])
     dispatch = AsyncMock()
 
     names = await dispatch_event(
         kind="lunch.upcoming",
         payload={},
         dispatch=dispatch,
-        skills_root=tmp_path,
     )
 
     assert names == []
