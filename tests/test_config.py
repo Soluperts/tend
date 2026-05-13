@@ -19,7 +19,7 @@ def test_settings_loads_defaults_when_no_toml_no_env(tmp_path, monkeypatch):
     assert s.llm_model == "claude-haiku-4-5"
     assert s.openwakeword_model == "hey_jarvis"
     assert s.wake_threshold == 0.5
-    assert s.sleep_phrase == "goodbye jarvis"
+    assert s.sleep_phrase == "goodbye"
     assert s.sleep_fuzz_ratio == 0.85
     assert s.awake_timeout_s == 30
     assert s.daily_reset_time == "04:00"

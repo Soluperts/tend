@@ -100,7 +100,7 @@ class Settings(BaseSettings):
     # Wake / sleep
     openwakeword_model: str = "hey_jarvis"
     wake_threshold: float = 0.5
-    sleep_phrase: str = "goodbye jarvis"
+    sleep_phrase: str = "goodbye"
     sleep_fuzz_ratio: float = 0.85
     awake_timeout_s: int = 30
 
