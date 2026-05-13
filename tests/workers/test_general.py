@@ -212,15 +212,16 @@ async def test_coding_worker_announces_error_when_run_claude_fails(
     assert "status" in response_kwargs or len(response_args) >= 3
 
 
-async def test_coding_worker_default_workspace_resolves_under_home():
-    """If no workspace_dir is configured, default to ~/.tend/workspace/."""
-    from tend.workers.general import GeneralWorker, DEFAULT_WORKSPACE
+async def test_coding_worker_default_workspace_resolves_under_tend_home(monkeypatch, tmp_path):
+    """If no workspace_dir is configured, default to $TEND_HOME/workspace/."""
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    from tend.workers.general import GeneralWorker
 
     cfg = WorkerConfig()
     worker = GeneralWorker(
         "coding", bus=MagicMock(), store=MagicMock(), config=cfg,
     )
-    assert worker._workspace_dir == DEFAULT_WORKSPACE
+    assert worker._workspace_dir == tmp_path / "workspace"
 
 
 async def test_coding_worker_workspace_dir_from_config(tmp_path):
@@ -242,6 +243,12 @@ async def test_general_worker_injects_skill_catalog_into_system_prompt(
     from tend.sessions import SessionEntry
     from tend.workers.general import GeneralWorker
 
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    empty_critical = tmp_path / "_empty_critical"
+    empty_critical.mkdir()
+    from tend import paths
+    monkeypatch.setattr(paths, "critical_skills_dir", lambda: empty_critical)
+
     skills_root = tmp_path / "skills"
     (skills_root / "meal-plan").mkdir(parents=True)
     (skills_root / "meal-plan" / "SKILL.md").write_text(
@@ -256,7 +263,6 @@ async def test_general_worker_injects_skill_catalog_into_system_prompt(
         allowed_tools=["Read", "Edit", "Write", "Bash"],
         setting_sources="user",
         workspace_dir=str(tmp_path / "workspace"),
-        skills_dir=str(skills_root),
     )
 
     class _StubBus:
@@ -315,14 +321,18 @@ async def test_general_worker_system_prompt_omits_catalog_when_empty(
     from tend.sessions import SessionEntry
     from tend.workers.general import GeneralWorker
 
-    skills_root = tmp_path / "empty-skills"  # does not exist
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    empty_critical = tmp_path / "_empty_critical"
+    empty_critical.mkdir()
+    from tend import paths
+    monkeypatch.setattr(paths, "critical_skills_dir", lambda: empty_critical)
+    # No $TEND_HOME/skills/ created, so user catalog is empty.
 
     captured_specs = []
     store = SessionStore(root=tmp_path / "store")
     cfg = WorkerConfig(
         allowed_tools=["Read"],
         workspace_dir=str(tmp_path / "workspace"),
-        skills_dir=str(skills_root),
     )
 
     class _StubBus:
@@ -368,31 +378,15 @@ async def test_general_worker_system_prompt_omits_catalog_when_empty(
     assert "\n<available-skills>" not in sp
 
 
-async def test_general_worker_default_skills_dir_resolves_under_home():
-    """If no skills_dir is configured, default to ~/.tend/skills/."""
-    from tend.workers.general import DEFAULT_SKILLS_DIR, GeneralWorker
-
-    cfg = WorkerConfig()
-    worker = GeneralWorker(
-        "general", bus=MagicMock(), store=MagicMock(), config=cfg,
-    )
-    assert worker._workspace_skills_dir == DEFAULT_SKILLS_DIR
-
-
-async def test_general_worker_skills_dir_from_config(tmp_path):
-    """An explicit `skills_dir` in WorkerConfig wins over the default."""
-    from tend.workers.general import GeneralWorker
-
-    cfg = WorkerConfig(skills_dir=str(tmp_path / "custom-skills"))
-    worker = GeneralWorker(
-        "general", bus=MagicMock(), store=MagicMock(), config=cfg,
-    )
-    assert worker._workspace_skills_dir == tmp_path / "custom-skills"
-
-
 @pytest.mark.asyncio
 async def test_general_worker_quarantines_unsafe_skill_authored_this_run(tmp_path, monkeypatch):
     """A SKILL.md written during the run with critical findings should be moved to quarantine."""
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    empty_critical = tmp_path / "_empty_critical"
+    empty_critical.mkdir()
+    from tend import paths
+    monkeypatch.setattr(paths, "critical_skills_dir", lambda: empty_critical)
+
     skills_root = tmp_path / "skills"
     skills_root.mkdir()
     workspace = tmp_path / "workspace"
@@ -406,7 +400,6 @@ async def test_general_worker_quarantines_unsafe_skill_authored_this_run(tmp_pat
         allowed_tools=["Read","Edit","Write","Bash"],
         setting_sources="user",
         workspace_dir=str(workspace),
-        skills_dir=str(skills_root),
     )
 
     class _StubBus:
@@ -469,6 +462,12 @@ async def test_general_worker_quarantines_unsafe_skill_authored_this_run(tmp_pat
 @pytest.mark.asyncio
 async def test_general_worker_marks_clean_skill_as_created(tmp_path, monkeypatch):
     """A clean SKILL.md authored during the run should land in created, not quarantined."""
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    empty_critical = tmp_path / "_empty_critical"
+    empty_critical.mkdir()
+    from tend import paths
+    monkeypatch.setattr(paths, "critical_skills_dir", lambda: empty_critical)
+
     skills_root = tmp_path / "skills"
     skills_root.mkdir()
     workspace = tmp_path / "workspace"
@@ -482,7 +481,6 @@ async def test_general_worker_marks_clean_skill_as_created(tmp_path, monkeypatch
         allowed_tools=["Read","Edit","Write","Bash"],
         setting_sources="user",
         workspace_dir=str(workspace),
-        skills_dir=str(skills_root),
     )
 
     class _StubBus:

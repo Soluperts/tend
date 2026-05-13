@@ -30,10 +30,11 @@ from pipecat_subagents.agents.task_decorator import task
 from pipecat_subagents.bus import AgentBus
 from pipecat_subagents.bus.messages import BusFrameMessage
 
+from tend import paths
 from tend.config import WorkerConfig
 from tend.sessions import SessionStore
 from tend.skills import (
-    enumerate_skills,
+    enumerate_all_skills,
     format_catalog_xml,
     quarantine_skill,
     scan_text,
@@ -41,23 +42,13 @@ from tend.skills import (
 from tend.workers.claude_cli import ClaudeCliWorker, ClaudeRunSpec
 
 
-DEFAULT_WORKSPACE = Path.home() / ".tend" / "workspace"
-DEFAULT_SKILLS_DIR = Path.home() / ".tend" / "skills"
-
 SILENT_MARKER = "(nothing to surface)"
 
 
 def _resolve_workspace(config: WorkerConfig) -> Path:
     raw = config.workspace_dir
     if not raw:
-        return DEFAULT_WORKSPACE
-    return Path(raw).expanduser()
-
-
-def _resolve_skills_dir(config: WorkerConfig) -> Path:
-    raw = config.skills_dir
-    if not raw:
-        return DEFAULT_SKILLS_DIR
+        return paths.tend_home() / "workspace"
     return Path(raw).expanduser()
 
 
@@ -120,7 +111,6 @@ class GeneralWorker(ClaudeCliWorker):
         config: WorkerConfig,
         subprocess_factory=None,
         workspace_dir: Path | None = None,
-        skills_dir: Path | None = None,
         announcer=None,
     ):
         super().__init__(
@@ -128,7 +118,6 @@ class GeneralWorker(ClaudeCliWorker):
         )
         self._config = config
         self._workspace_dir = workspace_dir or _resolve_workspace(config)
-        self._workspace_skills_dir = skills_dir or _resolve_skills_dir(config)
         self._announcer = announcer
 
     def _ensure_workspace(self) -> Path:
@@ -154,10 +143,10 @@ class GeneralWorker(ClaudeCliWorker):
         # (sub-second floor on most fs, plus the gap between time.time() and
         # the actual write) doesn't cause us to miss freshly-written files.
         task_start = time.time() - 1.0
-        skills_dir = self._workspace_skills_dir
+        user_skills_dir = paths.user_skills_dir()
         try:
             workspace = await asyncio.to_thread(self._ensure_workspace)
-            skills = await asyncio.to_thread(enumerate_skills, skills_dir)
+            skills = await asyncio.to_thread(enumerate_all_skills)
             system_prompt = _GENERAL_PREAMBLE
             catalog = format_catalog_xml(skills)
             if catalog:
@@ -193,7 +182,7 @@ class GeneralWorker(ClaudeCliWorker):
         # failure during the scan must not invalidate the run itself.
         try:
             created, quarantined = await asyncio.to_thread(
-                self._post_run_scan, skills_dir, task_start,
+                self._post_run_scan, user_skills_dir, task_start,
             )
         except Exception:
             logger.exception("post-hoc scan failed; treating run as clean")
