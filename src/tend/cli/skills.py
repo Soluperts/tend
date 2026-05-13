@@ -120,6 +120,30 @@ def disable_triggers(name: str = typer.Argument(..., help="Skill name.")) -> Non
     print(f"{name}: removed {count} trigger(s)")
 
 
+@app.command("new")
+def new(
+    name: str = typer.Argument(..., help="Skill name (kebab-case)."),
+    description: str = typer.Option(
+        ..., "--description", "-d",
+        help="One-line description.",
+    ),
+) -> None:
+    """Scaffold $TEND_HOME/skills/<name>/SKILL.md from the shipped template."""
+    name = validate_skill_name(name)
+    target_dir = paths.user_skills_dir() / name
+    if target_dir.exists():
+        print(f"Skill {name!r} already exists at {target_dir}", file=sys.stderr)
+        raise typer.Exit(code=2)
+    from importlib.resources import files
+    tmpl = files("tend._defaults").joinpath("skills/_template/SKILL.md").read_text(
+        encoding="utf-8",
+    )
+    body = tmpl.replace("{{NAME}}", name).replace("{{DESCRIPTION}}", description)
+    target_dir.mkdir(parents=True)
+    (target_dir / "SKILL.md").write_text(body, encoding="utf-8")
+    print(f"Wrote {target_dir / 'SKILL.md'}")
+
+
 def scan_skill_command(
     name: str = typer.Argument(..., help="Skill name (folder under $TEND_HOME/skills/)."),
 ) -> None:
