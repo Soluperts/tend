@@ -5,7 +5,7 @@ from __future__ import annotations
 import click
 import typer
 
-from tend.cli import doctor, schedule, sessions, setup, skills, snapshot, webhook
+from tend.cli import doctor, schedule, service, sessions, setup, skills, snapshot, webhook
 
 
 app = typer.Typer(
@@ -21,6 +21,7 @@ app.add_typer(sessions.app, name="sessions")
 app.add_typer(skills.app, name="skills")
 app.add_typer(schedule.app, name="schedule")
 app.add_typer(webhook.app, name="webhook")
+app.add_typer(service.app, name="service")
 app.command("scan-skill")(skills.scan_skill_command)
 app.command("snapshot")(snapshot.snapshot_command)
 app.command("doctor")(doctor.doctor_command)
