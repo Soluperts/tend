@@ -24,6 +24,29 @@ def test_tend_home_env_not_expanded(monkeypatch):
     assert tend_home() == Path("~/custom")
 
 
+def test_wheel_side_paths_return_real_paths():
+    """importlib.resources.files() must resolve to real Paths the runtime can use."""
+    from tend.paths import (
+        critical_skills_dir, shipped_skills_dir,
+        shipped_soul_md, shipped_workspace_bin,
+    )
+    assert isinstance(critical_skills_dir(), Path)
+    assert isinstance(shipped_skills_dir(), Path)
+    assert isinstance(shipped_soul_md(), Path)
+    assert isinstance(shipped_workspace_bin(), Path)
+
+    import tend
+    pkg_root = Path(tend.__file__).resolve().parent
+    # Each wheel-side path lives under the package's _defaults/.
+    assert (pkg_root / "_defaults") in critical_skills_dir().parents
+
+
+def test_critical_skills_dir_caches():
+    """Repeated calls return the same path (process-lifetime cache)."""
+    from tend.paths import critical_skills_dir
+    assert critical_skills_dir() == critical_skills_dir()
+
+
 def test_user_side_paths_anchored(monkeypatch, tmp_path):
     monkeypatch.setenv("TEND_HOME", str(tmp_path))
     from tend.paths import (

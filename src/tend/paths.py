@@ -10,8 +10,29 @@ read from the package's ``_defaults/`` tree via ``importlib.resources``.
 
 from __future__ import annotations
 
+import atexit
 import os
+from contextlib import ExitStack
+from functools import lru_cache
+from importlib.resources import as_file, files
 from pathlib import Path
+
+
+_cleanup_stack = ExitStack()
+atexit.register(_cleanup_stack.close)
+
+
+@lru_cache(maxsize=1)
+def _materialize_defaults_root() -> Path:
+    """Return the on-disk path of the shipped ``_defaults`` tree.
+
+    For unzipped wheels (pip/pipx/uv common case) this is a no-op —
+    ``files()`` already points at a real directory. For zipped-wheel
+    installs we materialize via ``as_file()`` into a tempdir, cached
+    for the process lifetime; ``atexit`` cleans it up.
+    """
+    traversable = files("tend._defaults")
+    return Path(_cleanup_stack.enter_context(as_file(traversable)))
 
 
 def tend_home() -> Path:
@@ -64,3 +85,19 @@ def skills_backup_root() -> Path:
 
 def version_marker_path() -> Path:
     return tend_home() / ".tend-version"
+
+
+def critical_skills_dir() -> Path:
+    return _materialize_defaults_root() / "critical-skills"
+
+
+def shipped_skills_dir() -> Path:
+    return _materialize_defaults_root() / "skills"
+
+
+def shipped_soul_md() -> Path:
+    return _materialize_defaults_root() / "soul.md"
+
+
+def shipped_workspace_bin() -> Path:
+    return _materialize_defaults_root() / "workspace" / "bin"
