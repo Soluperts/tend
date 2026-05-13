@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+from typing import Optional
 
 import typer
 
@@ -142,6 +143,42 @@ def new(
     target_dir.mkdir(parents=True)
     (target_dir / "SKILL.md").write_text(body, encoding="utf-8")
     print(f"Wrote {target_dir / 'SKILL.md'}")
+
+
+@app.command("install")
+def install(
+    all_: bool = typer.Option(False, "--all", help="Install every shipped optional skill."),
+    name: Optional[list[str]] = typer.Option(
+        None, "--name", help="Install one or more named skills (repeatable).",
+    ),
+) -> None:
+    """Copy optional shipped skills into $TEND_HOME/skills/."""
+    import questionary
+    from tend import skill_update
+    from tend.skills import enumerate_installable_skills
+
+    if all_:
+        names = [s.name for s in enumerate_installable_skills()]
+    elif name:
+        names = name
+    else:
+        candidates = enumerate_installable_skills()
+        if not candidates:
+            print("No optional skills available to install.")
+            return
+        choices = [
+            questionary.Choice(title=f"{s.name} — {s.description}", value=s.name)
+            for s in candidates
+        ]
+        picked = questionary.checkbox("Install which skills?", choices=choices).ask()
+        names = picked or []
+
+    if not names:
+        print("Nothing selected.")
+        return
+
+    skill_update.install_optional_skills(names)
+    print(f"Installed: {', '.join(names)}")
 
 
 def scan_skill_command(
