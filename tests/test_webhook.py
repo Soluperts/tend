@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,23 +10,31 @@ from aiohttp.test_utils import TestClient, TestServer
 from tend.webhook import build_app
 
 
-def _make_app(*, announcer, dispatch, skills_root: Path, token: str = "TKN"):
+def _make_app(*, announcer, dispatch, token: str = "TKN"):
     return build_app(
         token=token,
         announcer=announcer,
         dispatch=dispatch,
-        skills_root=skills_root,
     )
 
 
 @pytest.fixture
-async def client(tmp_path):
+def isolated_workspace(monkeypatch, tmp_path):
+    """Redirect $TEND_HOME to tmp_path and empty out critical-skills."""
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    empty_critical = tmp_path / "_empty_critical"
+    empty_critical.mkdir()
+    from tend import paths
+    monkeypatch.setattr(paths, "critical_skills_dir", lambda: empty_critical)
+    return tmp_path
+
+
+@pytest.fixture
+async def client(isolated_workspace):
     announcer = MagicMock()
     announcer.announce = AsyncMock(return_value=True)
     dispatch = AsyncMock()
-    app = _make_app(
-        announcer=announcer, dispatch=dispatch, skills_root=tmp_path,
-    )
+    app = _make_app(announcer=announcer, dispatch=dispatch)
     async with TestClient(TestServer(app)) as c:
         c.announcer = announcer
         c.dispatch = dispatch
@@ -72,11 +79,13 @@ async def test_say_missing_text_400(client):
     assert r.status == 400
 
 
-async def test_event_dispatches_per_subscriber(tmp_path):
-    # Seed two subscribing skills
+async def test_event_dispatches_per_subscriber(isolated_workspace):
+    # Seed two subscribing skills under $TEND_HOME/skills/
+    skills_root = isolated_workspace / "skills"
+    skills_root.mkdir()
     for name in ("a", "b"):
-        (tmp_path / name).mkdir()
-        (tmp_path / name / "SKILL.md").write_text(
+        (skills_root / name).mkdir()
+        (skills_root / name / "SKILL.md").write_text(
             f"---\nname: {name}\ndescription: x\n"
             f"events:\n  - posture.slumped\n---\nbody\n",
             encoding="utf-8",
@@ -84,9 +93,7 @@ async def test_event_dispatches_per_subscriber(tmp_path):
     announcer = MagicMock()
     announcer.announce = AsyncMock(return_value=True)
     dispatch = AsyncMock()
-    app = _make_app(
-        announcer=announcer, dispatch=dispatch, skills_root=tmp_path,
-    )
+    app = _make_app(announcer=announcer, dispatch=dispatch)
     async with TestClient(TestServer(app)) as c:
         r = await c.post(
             "/event",

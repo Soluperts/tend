@@ -246,7 +246,6 @@ async def _run() -> None:
         dispatch=lambda target, payload: scheduler.request_task(
             target, payload=payload,
         ),
-        skills_root=Path.home() / ".tend" / "skills",
     )
     webhook_server = WebhookServer(
         host=settings.webhook.host,

@@ -10,7 +10,6 @@ the caller is responsible for keeping the network surface narrow.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Awaitable, Callable
 
 from aiohttp import web
@@ -24,7 +23,6 @@ def build_app(
     token: str,
     announcer,
     dispatch: Callable[[str, dict], Awaitable[None]],
-    skills_root: Path,
 ) -> web.Application:
     """Construct the aiohttp Application. Pure construction; the caller
     owns lifecycle (start/stop)."""
@@ -69,7 +67,7 @@ def build_app(
         payload = {k: v for k, v in body.items() if k != "kind"}
         names = await dispatch_event(
             kind=kind, payload=payload,
-            dispatch=dispatch, skills_root=skills_root,
+            dispatch=dispatch,
         )
         return web.json_response({"dispatched": names})
 
