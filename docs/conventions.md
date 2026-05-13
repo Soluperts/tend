@@ -62,18 +62,20 @@ return (init, env, dotenv, toml, secrets)
 
 ## CLI structure
 
-- **Framework: Typer.** Each command group lives in its own module under `src/tend/cli/` (`sessions.py`, `skills.py`, `schedule.py`, `webhook.py`, `snapshot.py`). Sub-apps register via `app.add_typer(name=...)`; top-level commands (`snapshot`, `scan-skill`) register directly on the root app via `app.command(name)(fn)`. `main(argv)` runs the root app with `standalone_mode=False` and returns the rc, so tests can call it directly.
+- **Framework: Typer.** Each command group lives in its own module under `src/tend/cli/` (`sessions.py`, `skills.py`, `schedule.py`, `webhook.py`, `snapshot.py`, `setup.py`, `doctor.py`, `service.py`). Sub-apps register via `app.add_typer(name=...)`; top-level commands (`snapshot`, `scan-skill`, `setup`, `doctor`) register directly on the root app via `app.command(name)(fn)`. `main(argv)` runs the root app with `standalone_mode=False` and returns the rc, so tests can call it directly.
 - Every command exposes `--help`. Long-running commands respect `--quiet` and `--verbose`.
 - Output: human-readable by default. Commands that compose with scripts expose `--json` and use stdout for JSON, stderr for status.
 - Exit codes: 0 success, 1 user error, 2 system error. `tend doctor` exits non-zero if any check is `✗`.
-- Subcommand list (current target):
-  - `tend setup` — interactive bootstrap (writes `$TEND_HOME/{tend.toml,.env}`).
-  - `tend doctor [--json]` — read-only diagnostic; same checks as setup.
-  - `tend service install [--uninstall]` — writes systemd user unit (Linux) or launchd plist (macOS).
-  - `tend skill {new,install,list,validate}` — skill scaffolding and management.
-  - `tend schedule {add,list,show,rm}` — wraps the cron store.
-  - `tend webhook test` — smoke-tests `/say`.
-  - `tend audio-check {speaker,mic,loopback}` — promoted from `scripts/audio_check.py`.
+- Subcommand list (shipped):
+  - `tend setup` — interactive bootstrap (writes `$TEND_HOME/{tend.toml,.env}`, prompts for secrets, auto-generates webhook token, installs optional skills).
+  - `tend doctor [--json]` — read-only diagnostic; runs the same `tend.checks` library as setup. Exit 0 all-ok, 1 warn-only, 2 any-fail.
+  - `tend service {install [--force],uninstall,start,stop,status}` — systemd user unit (Linux). `status` exits 0 only when the unit is active, matching systemctl conventions. macOS launchd is sub-project #3 (macOS port).
+  - `tend sessions {list,show,tail,cat}` — worker session history.
+  - `tend skills {list,show,cat,rm,quarantined,new,install,validate,enable-triggers,disable-triggers}` — skill management (plural, matching `$TEND_HOME/skills/`).
+  - `tend schedule {list,show,add,rm}` — cron store wrapper.
+  - `tend snapshot` — snapshot Claude Code env to `$TEND_HOME/claude-env.md`.
+  - `tend webhook test` — POST a smoke message to `/say`.
+  - `tend scan-skill <name>` — top-level safety scanner (use `tend skills validate` for the combined frontmatter + scan check).
 
 ## Bootstrap UX (`tend setup` / `tend doctor`)
 

@@ -11,13 +11,13 @@ tend is a working single-user voice assistant for desk workers, running on Raspb
 Goal: a stranger can install tend tonight and have it working in 10 minutes. Critical path, in dependency order:
 
 1. **OSS clerical** — `LICENSE` (Apache-2.0), repo rename to `tend`, secrets audit (move `luthraridhwan@gmail.com` out of `tend.toml`), GH templates + `SECURITY.md` + dependabot. *~½ day.*
-2. **First-run UX** — `tend setup` (interactive bootstrap with `questionary` + `rich`, keyring + `.env` fallback for secrets), `tend doctor` (diagnostics with `--json`), `tend skill {new,install,list,validate}`, `tend service install`. *~2 days.*
-3. **macOS port** — `audio/channels.py` mono branch, mute-during-TTS for acoustic echo, launchd plist, README install path. *~1–2 days. AEC is the only design risk.*
-4. **Webhook hardening** — HMAC-SHA256 signing, `X-Tend-Timestamp` replay protection, `X-Tend-Delivery-Id` idempotency. *~½ day.*
-5. **SKILL.md frontmatter v2** — add `version`, `min_tend_version`, `requires:`. Cheap now, breaking later. *~½ day.*
+2. **macOS port** — `audio/channels.py` mono branch, mute-during-TTS for acoustic echo, launchd plist, README install path. *~1–2 days. AEC is the only design risk.*
+3. **Webhook hardening** — HMAC-SHA256 signing, `X-Tend-Timestamp` replay protection, `X-Tend-Delivery-Id` idempotency. *~½ day.*
+4. **SKILL.md frontmatter v2** — add `version`, `min_tend_version`, `requires:`. Cheap now, breaking later. *~½ day.*
+5. **Decouple STT/TTS provider from API-key presence** — `services._make_stt`/`_make_tts` currently route on "is the key set?", which conflates *I have credentials* with *I want to use them now* and makes a third provider structurally ambiguous. Add explicit `stt_provider` / `tts_provider` fields to `tend.toml`, default to local (Whisper/Piper) so fresh installs work without keys, write the wizard's pick into the file, and rewrite the runtime + doctor dispatch to read the field. Migration: users with no provider field fall back to the current key-presence inference for one version with a deprecation warning. Schema change — must land before the 1.0 schema lock. *~½ day.*
 6. **Release machinery + docs + README rewrite** — release-please workflow, PyPI Trusted Publishing + Sigstore, mkdocs-Material site, README rewrite with asciinema demo, Homebrew tap. *~2 days.*
 
-Total: ~8–10 working days. Each item gets a spec under `docs/superpowers/specs/` and a plan under `docs/superpowers/plans/` before implementation, per the existing project convention. Standards every item must follow live in [`docs/conventions.md`](docs/conventions.md).
+Total: ~8.5–10.5 working days. Each item gets a spec under `docs/superpowers/specs/` and a plan under `docs/superpowers/plans/` before implementation, per the existing project convention. Standards every item must follow live in [`docs/conventions.md`](docs/conventions.md).
 
 ## After public release
 

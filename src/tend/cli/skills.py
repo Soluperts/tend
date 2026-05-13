@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+from typing import Optional
 
 import typer
 
@@ -118,6 +119,94 @@ def disable_triggers(name: str = typer.Argument(..., help="Skill name.")) -> Non
         return
     count = store.remove_by_source(f"skill:{name}")
     print(f"{name}: removed {count} trigger(s)")
+
+
+@app.command("new")
+def new(
+    name: str = typer.Argument(..., help="Skill name (kebab-case)."),
+    description: str = typer.Option(
+        ..., "--description", "-d",
+        help="One-line description.",
+    ),
+) -> None:
+    """Scaffold $TEND_HOME/skills/<name>/SKILL.md from the shipped template."""
+    name = validate_skill_name(name)
+    target_dir = paths.user_skills_dir() / name
+    if target_dir.exists():
+        print(f"Skill {name!r} already exists at {target_dir}", file=sys.stderr)
+        raise typer.Exit(code=2)
+    from importlib.resources import files
+    tmpl = files("tend._defaults").joinpath("skills/_template/SKILL.md").read_text(
+        encoding="utf-8",
+    )
+    body = tmpl.replace("{{NAME}}", name).replace("{{DESCRIPTION}}", description)
+    target_dir.mkdir(parents=True)
+    (target_dir / "SKILL.md").write_text(body, encoding="utf-8")
+    print(f"Wrote {target_dir / 'SKILL.md'}")
+
+
+@app.command("install")
+def install(
+    all_: bool = typer.Option(False, "--all", help="Install every shipped optional skill."),
+    name: Optional[list[str]] = typer.Option(
+        None, "--name", help="Install one or more named skills (repeatable).",
+    ),
+) -> None:
+    """Copy optional shipped skills into $TEND_HOME/skills/."""
+    import questionary
+    from tend import skill_update
+    from tend.skills import enumerate_installable_skills
+
+    if all_:
+        names = [s.name for s in enumerate_installable_skills()]
+    elif name:
+        names = name
+    else:
+        candidates = enumerate_installable_skills()
+        if not candidates:
+            print("No optional skills available to install.")
+            return
+        choices = [
+            questionary.Choice(title=f"{s.name} — {s.description}", value=s.name)
+            for s in candidates
+        ]
+        picked = questionary.checkbox("Install which skills?", choices=choices).ask()
+        names = picked or []
+
+    if not names:
+        print("Nothing selected.")
+        return
+
+    skill_update.install_optional_skills(names)
+    print(f"Installed: {', '.join(names)}")
+
+
+@app.command("validate")
+def validate(name: str = typer.Argument(..., help="Skill name.")) -> None:
+    """Validate frontmatter parse + safety scan. Exit codes match scan-skill."""
+    from tend.skills import SkillFrontmatterError, parse_frontmatter
+
+    name = validate_skill_name(name)
+    p = paths.user_skills_dir() / name / "SKILL.md"
+    if not p.is_file():
+        print(f"no skill named {name!r}", file=sys.stderr)
+        raise typer.Exit(code=3)
+
+    text = p.read_text(encoding="utf-8")
+
+    try:
+        parse_frontmatter(text)
+    except SkillFrontmatterError as e:
+        print(f"{name}: frontmatter invalid: {e}", file=sys.stderr)
+        raise typer.Exit(code=2)
+
+    report = scan_text(text)
+    if report.is_clean:
+        print(f"{name}: clean")
+        return
+    for f in report.findings:
+        print(f"  [{f.severity}] {f.rule} (line {f.line}): {f.snippet}")
+    raise typer.Exit(code=2 if report.is_critical else 1)
 
 
 def scan_skill_command(
