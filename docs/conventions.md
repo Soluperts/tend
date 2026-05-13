@@ -62,7 +62,7 @@ return (init, env, dotenv, toml, secrets)
 
 ## CLI structure
 
-- **Framework: Typer.** Argparse is fine for one entrypoint; once we have subcommand trees (`setup`, `doctor`, `skill {new,install,list,validate}`, `service install`, `schedule {add,list,rm}`, `webhook test`), Typer's nested-app shape and type-hint inference pay back the migration immediately.
+- **Framework: Typer.** Each command group lives in its own module under `src/tend/cli/` (`sessions.py`, `skills.py`, `schedule.py`, `webhook.py`, `snapshot.py`). Sub-apps register via `app.add_typer(name=...)`; top-level commands (`snapshot`, `scan-skill`) register directly on the root app via `app.command(name)(fn)`. `main(argv)` runs the root app with `standalone_mode=False` and returns the rc, so tests can call it directly.
 - Every command exposes `--help`. Long-running commands respect `--quiet` and `--verbose`.
 - Output: human-readable by default. Commands that compose with scripts expose `--json` and use stdout for JSON, stderr for status.
 - Exit codes: 0 success, 1 user error, 2 system error. `tend doctor` exits non-zero if any check is `✗`.

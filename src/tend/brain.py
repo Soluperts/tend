@@ -184,14 +184,10 @@ class Brain(LLMAgent):
     @tool
     async def list_skills(self, params: FunctionCallParams):
         """List the workflows tend currently knows how to do."""
-        import os as _os
-        from pathlib import Path as _Path
-
+        from tend import paths
         from tend.skills import enumerate_skills
 
-        root = _Path(_os.environ.get("TEND_SKILLS_ROOT")
-                     or _Path.home() / ".tend" / "skills")
-        skills = enumerate_skills(root)
+        skills = enumerate_skills(paths.user_skills_dir())
         if not skills:
             await params.result_callback(
                 "I haven't built any workflows yet."
@@ -355,16 +351,10 @@ class Brain(LLMAgent):
         if self._scheduler is None:
             await params.result_callback("Scheduler not configured.")
             return
-        import os as _os
-        from pathlib import Path as _Path
-
+        from tend import paths
         from tend.skills import enumerate_skills
 
-        root = _Path(
-            _os.environ.get("TEND_SKILLS_ROOT")
-            or _Path.home() / ".tend" / "skills"
-        )
-        matching = [s for s in enumerate_skills(root) if s.name == skill]
+        matching = [s for s in enumerate_skills(paths.user_skills_dir()) if s.name == skill]
         if not matching:
             await params.result_callback(f"No skill named '{skill}'.")
             return

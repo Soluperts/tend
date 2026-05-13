@@ -156,9 +156,8 @@ async def test_do_task_no_store_does_not_dispatch(brain_no_store):
 
 async def test_list_skills_empty_when_no_skills(tmp_path, monkeypatch, brain):
     """list_skills surfaces a friendly message when no skills exist."""
-    skills_root = tmp_path / "skills"
-    skills_root.mkdir()
-    monkeypatch.setenv("TEND_SKILLS_ROOT", str(skills_root))
+    (tmp_path / "skills").mkdir()
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
     params = _ParamsCapture()
     await brain.list_skills(params)
     assert params.value is not None
@@ -166,7 +165,7 @@ async def test_list_skills_empty_when_no_skills(tmp_path, monkeypatch, brain):
 
 
 async def test_list_skills_reads_filesystem(tmp_path, monkeypatch, brain):
-    """list_skills reads SKILL.md files from TEND_SKILLS_ROOT and returns
+    """list_skills reads SKILL.md files from $TEND_HOME/skills/ and returns
     them via result_callback."""
     skills_root = tmp_path / "skills"
     (skills_root / "meal-plan").mkdir(parents=True)
@@ -174,7 +173,7 @@ async def test_list_skills_reads_filesystem(tmp_path, monkeypatch, brain):
         "---\nname: meal-plan\ndescription: Plan meals.\n---\nbody",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TEND_SKILLS_ROOT", str(skills_root))
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
     params = _ParamsCapture()
     await brain.list_skills(params)
     assert params.value is not None
