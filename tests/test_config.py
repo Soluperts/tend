@@ -6,11 +6,11 @@ import pytest
 
 
 def test_settings_loads_defaults_when_no_toml_no_env(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
     for k in ("ANTHROPIC_API_KEY", "DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY"):
         monkeypatch.delenv(k, raising=False)
     for k in list(os.environ):
-        if k.startswith("TEND_"):
+        if k.startswith("TEND_") and k != "TEND_HOME":
             monkeypatch.delenv(k)
 
     from tend.config import Settings
@@ -27,13 +27,13 @@ def test_settings_loads_defaults_when_no_toml_no_env(tmp_path, monkeypatch):
 
 
 def test_settings_reads_tend_toml(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
     (tmp_path / "tend.toml").write_text(
         'llm_model = "claude-opus-4-7"\n'
         "awake_timeout_s = 60\n"
     )
     for k in list(os.environ):
-        if k.startswith("TEND_"):
+        if k.startswith("TEND_") and k != "TEND_HOME":
             monkeypatch.delenv(k)
 
     from tend.config import Settings
@@ -41,12 +41,11 @@ def test_settings_reads_tend_toml(tmp_path, monkeypatch):
 
     assert s.llm_model == "claude-opus-4-7"
     assert s.awake_timeout_s == 60
-    # other fields fall back to defaults
-    assert s.openwakeword_model == "hey_jarvis"
+    assert s.openwakeword_model == "hey_jarvis"  # other fields default
 
 
 def test_env_overrides_toml(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
     (tmp_path / "tend.toml").write_text('llm_model = "from-toml"\n')
     monkeypatch.setenv("TEND_LLM_MODEL", "from-env")
 
@@ -56,8 +55,19 @@ def test_env_overrides_toml(tmp_path, monkeypatch):
     assert s.llm_model == "from-env"
 
 
+def test_dotenv_in_tend_home(tmp_path, monkeypatch):
+    """Secrets in $TEND_HOME/.env are picked up."""
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=from-dotenv\n")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    from tend.config import Settings
+    s = Settings()
+    assert s.anthropic_api_key == "from-dotenv"
+
+
 def test_secrets_loaded_from_env(monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-anthropic")
     monkeypatch.setenv("DEEPGRAM_API_KEY", "dg-test")
     monkeypatch.setenv("ELEVENLABS_API_KEY", "el-test")
@@ -70,8 +80,20 @@ def test_secrets_loaded_from_env(monkeypatch, tmp_path):
     assert s.elevenlabs_api_key == "el-test"
 
 
+def test_missing_user_toml_silently_skipped(tmp_path, monkeypatch):
+    """No $TEND_HOME/tend.toml present → class defaults apply, no error."""
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    for k in list(os.environ):
+        if k.startswith("TEND_") and k != "TEND_HOME":
+            monkeypatch.delenv(k)
+
+    from tend.config import Settings
+    s = Settings()
+    assert s.whisper_model == "tiny.en"
+    assert s.wake_threshold == 0.5
+
+
 def test_scheduler_config_defaults_present():
-    """The model itself ships sensible defaults; tend.toml may override."""
     from tend.config import SchedulerConfig
     c = SchedulerConfig()
     assert c.heartbeat_every == "30m"
@@ -92,7 +114,8 @@ def test_announcer_config_defaults_present():
     assert isinstance(c.category, dict)
 
 
-def test_webhook_token_from_env(monkeypatch):
+def test_webhook_token_from_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
     from tend.config import Settings
     monkeypatch.setenv("TEND_WEBHOOK_TOKEN", "shh")
     s = Settings()
@@ -114,7 +137,7 @@ def test_google_event_config_defaults():
 
 
 def test_google_config_loads_from_toml(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
     (tmp_path / "tend.toml").write_text("""
 [google]
 watched_calendars = ["tend", "primary"]
@@ -128,7 +151,7 @@ upcoming_lead = "5m"
 emit = ["upcoming", "starting", "ended"]
 """)
     for k in list(os.environ):
-        if k.startswith("TEND_"):
+        if k.startswith("TEND_") and k != "TEND_HOME":
             monkeypatch.delenv(k)
 
     from tend.config import Settings

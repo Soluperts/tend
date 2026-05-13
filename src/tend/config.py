@@ -14,6 +14,7 @@ from typing import Type
 from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import (
     BaseSettings,
+    DotEnvSettingsSource,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     TomlConfigSettingsSource,
@@ -71,10 +72,10 @@ class Settings(BaseSettings):
     """All tend settings. Field names are lowercase; env vars are TEND_<UPPERCASE>."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
         env_prefix="TEND_",
-        toml_file="tend.toml",
         extra="ignore",
+        # env_file and toml_file resolved dynamically via paths module —
+        # see settings_customise_sources below.
     )
 
     # LLM brain
@@ -145,13 +146,15 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        return (
-            init_settings,
-            env_settings,
-            dotenv_settings,
-            TomlConfigSettingsSource(settings_cls),
-            file_secret_settings,
-        )
+        # Re-build dotenv + toml sources with runtime-resolved paths so
+        # $TEND_HOME overrides take effect (the model_config's env_file/
+        # toml_file are evaluated at class definition time, which is too
+        # early — `tend.paths` reads the env var at call time).
+        from tend.paths import env_path, toml_path
+
+        dotenv = DotEnvSettingsSource(settings_cls, env_file=str(env_path()))
+        toml = TomlConfigSettingsSource(settings_cls, toml_file=str(toml_path()))
+        return (init_settings, env_settings, dotenv, toml, file_secret_settings)
 
 
 settings = Settings()

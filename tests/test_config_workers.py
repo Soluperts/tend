@@ -13,6 +13,7 @@ def test_worker_config_defaults():
 
 
 def test_settings_loads_workers_block_from_toml(tmp_path, monkeypatch):
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
     toml = tmp_path / "tend.toml"
     toml.write_text(
         """
@@ -26,7 +27,6 @@ model = "claude-sonnet-4-6"
 allowed_tools = ["mcp__google_calendar__*"]
 """
     )
-    monkeypatch.chdir(tmp_path)
     s = Settings()
     assert "general" in s.workers
     assert s.workers["general"].model == "claude-opus-4-7"
@@ -37,6 +37,6 @@ allowed_tools = ["mcp__google_calendar__*"]
 
 
 def test_settings_workers_default_empty(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
     s = Settings()
     assert s.workers == {}
