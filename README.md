@@ -46,26 +46,46 @@ The Piper voice (`en_US-ryan-high.onnx`) is downloaded by Pipecat on first use.
 
 ## Configure
 
+tend's user state lives at `$TEND_HOME` (default `~/.config/tend/`). On first run, populate it with the shipped defaults via `tend setup` (interactive bootstrap — lands in sub-project #4). For now, the minimal flow is:
+
 ```bash
-cp .env.example .env
-$EDITOR .env       # add your API keys
-$EDITOR soul.md    # optionally tune the assistant's persona
+mkdir -p ~/.config/tend
+echo "ANTHROPIC_API_KEY=sk-ant-..." > ~/.config/tend/.env
+echo "0.1.0" > ~/.config/tend/.tend-version
 ```
 
-`tend.toml` (committed in this repo) holds the defaults — model names, timeouts, paths, the wake/sleep phrases, etc. Edit it to override defaults; environment variables (`TEND_*`) override `tend.toml`; `.env` holds vendor API keys only.
+Optional overrides go in `~/.config/tend/tend.toml`:
+
+```toml
+llm_model = "claude-opus-4-7"
+awake_timeout_s = 120
+elevenlabs_speed = 1.15
+
+[announcer]
+default_cooldown_s = 600
+```
 
 | Variable | Where | Purpose |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | `.env` | Brain LLM. Without it, brain is degraded. |
-| `DEEPGRAM_API_KEY` | `.env` | Streaming STT. Without it, local Whisper is used. |
-| `ELEVENLABS_API_KEY` | `.env` | Cloud TTS. Without it, local Piper is used. |
-| `llm_model` | `tend.toml` | Anthropic model id. Default `claude-haiku-4-5`. |
-| `sleep_phrase` | `tend.toml` | Phrase that ends the conversation. Fuzzy-matched. |
-| `awake_timeout_s` | `tend.toml` | Silence (seconds) before auto-sleep. Default 30. |
-| `daily_reset_time` | `tend.toml` | Wall-clock daily session reset (`HH:MM`). Default 04:00. |
-| `soul_path` | `tend.toml` | Path to the persona/context file. Default `soul.md`. |
-| `TEND_SKILLS_ROOT` | env var | Override the directory the CLI and `list_skills` tool read from. Defaults to `~/.tend/skills`. The GeneralWorker uses `[workers.general].skills_dir` instead. |
-| `TEND_SKILLS_QUARANTINE_ROOT` | env var | Override the directory `tend skills quarantined` reads from. Defaults to `~/.tend/skills-quarantined`. |
+| `ANTHROPIC_API_KEY` | `$TEND_HOME/.env` or env | Brain LLM. Without it, brain is degraded. |
+| `DEEPGRAM_API_KEY` | `$TEND_HOME/.env` or env | Streaming STT. Without it, local Whisper is used. |
+| `ELEVENLABS_API_KEY` | `$TEND_HOME/.env` or env | Cloud TTS. Without it, local Piper is used. |
+| `llm_model` | `$TEND_HOME/tend.toml` | Anthropic model id. Default `claude-haiku-4-5`. |
+| `sleep_phrase` | `$TEND_HOME/tend.toml` | Phrase that ends the conversation. Fuzzy-matched. |
+| `awake_timeout_s` | `$TEND_HOME/tend.toml` | Silence (seconds) before auto-sleep. Default 30. |
+| `daily_reset_time` | `$TEND_HOME/tend.toml` | Wall-clock daily session reset (`HH:MM`). Default 04:00. |
+
+### Running from a clone (development)
+
+Set `TEND_HOME` to a project-local workspace so dev work doesn't touch your real one:
+
+```bash
+export TEND_HOME=$PWD/.tend-dev
+mkdir -p $TEND_HOME && echo "0.1.0" > $TEND_HOME/.tend-version
+python -m tend
+```
+
+`.tend-dev/` is gitignored.
 
 The GeneralWorker is configured under `[workers.general]` in `tend.toml`:
 
