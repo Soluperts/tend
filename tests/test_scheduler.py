@@ -35,7 +35,6 @@ def _new_scheduler(store, dispatch, **overrides):
         bus=bus,
         store=store,
         dispatch=dispatch,
-        skills_root=overrides.get("skills_root"),
         default_tz=overrides.get("default_tz", "UTC"),
         missed_at_policy=overrides.get("missed_at_policy", "run-on-restart"),
     )
@@ -219,8 +218,14 @@ def _seed_skill(root, name, events):
 
 
 async def test_event_mode_job_routes_via_dispatch_event(
-    store, dispatch, tmp_path,
+    store, dispatch, tmp_path, monkeypatch,
 ):
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    empty_critical = tmp_path / "_empty_critical"
+    empty_critical.mkdir()
+    from tend import paths
+    monkeypatch.setattr(paths, "critical_skills_dir", lambda: empty_critical)
+
     skills_root = tmp_path / "skills"
     skills_root.mkdir()
     _seed_skill(skills_root, "lunch-prep", ["lunch.upcoming"])
@@ -232,7 +237,6 @@ async def test_event_mode_job_routes_via_dispatch_event(
         bus=bus,
         store=store,
         dispatch=dispatch,
-        skills_root=skills_root,
         default_tz="UTC",
         missed_at_policy="run-on-restart",
     )
@@ -256,9 +260,6 @@ async def test_event_mode_job_routes_via_dispatch_event(
 
 
 async def test_legacy_job_still_dispatches_to_general(store, dispatch, tmp_path):
-    skills_root = tmp_path / "skills"
-    skills_root.mkdir()
-
     bus = MagicMock()
     bus.publish = AsyncMock()
     s = Scheduler(
@@ -266,7 +267,6 @@ async def test_legacy_job_still_dispatches_to_general(store, dispatch, tmp_path)
         bus=bus,
         store=store,
         dispatch=dispatch,
-        skills_root=skills_root,
         default_tz="UTC",
         missed_at_policy="run-on-restart",
     )

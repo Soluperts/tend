@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
-from pathlib import Path
 from typing import Awaitable, Callable, Literal
 from zoneinfo import ZoneInfo
 
@@ -41,14 +40,12 @@ class Scheduler(BaseAgent):
         bus: AgentBus,
         store: CronStore,
         dispatch: Callable[[str, dict], Awaitable[None]],
-        skills_root: Path | None = None,
         default_tz: str = "UTC",
         missed_at_policy: MissedPolicy = "run-on-restart",
     ):
         super().__init__(name, bus=bus)
         self._store = store
         self._dispatch = dispatch
-        self._skills_root = skills_root
         self._default_tz = default_tz
         self._missed_policy = missed_at_policy
         self._loop_task: asyncio.Task | None = None
@@ -238,7 +235,6 @@ class Scheduler(BaseAgent):
                     kind=job.event_kind,
                     payload=job.event_payload or {},
                     dispatch=self._dispatch,
-                    skills_root=self._skills_root,
                 )
             else:
                 await self._dispatch("general", job.payload)
