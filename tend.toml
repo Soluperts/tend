@@ -11,7 +11,7 @@ whisper_model = "tiny.en"
 elevenlabs_voice_id = "4cYYCJZtDFOV61Rs1Eoa"
 elevenlabs_model = "eleven_turbo_v2_5"
 # Playback speed (ElevenLabs accepts ~0.7–1.2). Comment out for default.
-elevenlabs_speed = 1.15
+# elevenlabs_speed = 1.0
 piper_voice = "en_US-ryan-high"
 
 # Audio
@@ -22,7 +22,7 @@ openwakeword_model = "hey_jarvis"
 wake_threshold = 0.5
 sleep_phrase = "goodbye"
 sleep_fuzz_ratio = 0.85
-awake_timeout_s = 300
+awake_timeout_s = 30
 
 # Day-session
 daily_reset_time = "04:00"
@@ -49,11 +49,11 @@ host = "127.0.0.1"
 port = 7331
 
 [announcer]
-default_cooldown_s = 1
+default_cooldown_s = 300
 
 [announcer.category]
-posture = 1
-hydration = 1
+posture = 600
+hydration = 900
 
 [google]
 watched_calendars = ["tend", "luthraridhwan@gmail.com"]
