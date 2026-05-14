@@ -14,10 +14,11 @@ most-recently-played bytes for the requested length.
 
 from __future__ import annotations
 
+import array
 import logging
 import sys
 import threading
-from typing import Optional
+from ctypes import c_int16
 
 from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
 from pipecat.frames.frames import FilterControlFrame, FilterEnableFrame
@@ -103,7 +104,6 @@ class SpeexAECFilter(BaseAudioFilter):
 
     def __init__(self, reference: ReferenceBuffer):
         self._reference = reference
-        self._sample_rate = 0
         self._aec = None
         self._pyaec_lib = None
         self._enabled = True
@@ -111,7 +111,6 @@ class SpeexAECFilter(BaseAudioFilter):
     async def start(self, sample_rate: int):
         from pyaec import Aec
         from pyaec import lib as _pyaec_lib
-        self._sample_rate = sample_rate
         # Keep a reference to pyaec's ctypes lib on the instance. pyaec stores it
         # as a module-level global; during CPython interpreter shutdown the global
         # can be cleared before Aec.__del__ runs, causing a SIGSEGV. Holding our
@@ -144,9 +143,6 @@ class SpeexAECFilter(BaseAudioFilter):
         # Read aligned reference bytes.
         ref = self._reference.read(len(audio))
 
-        import array
-        from ctypes import c_int16
-
         mic = array.array("h")
         mic.frombytes(audio)
         rfa = array.array("h")
@@ -158,26 +154,20 @@ class SpeexAECFilter(BaseAudioFilter):
         # shutdown, causing a SIGSEGV after pyaec's module-level state is torn
         # down. Named references avoid that ordering hazard entirely.
         frame_size = len(mic)
-        mic_c = (c_int16 * frame_size)(*mic.tolist())
-        ref_c = (c_int16 * frame_size)(*rfa.tolist())
+        mic_c = (c_int16 * frame_size).from_buffer_copy(mic)
+        ref_c = (c_int16 * frame_size).from_buffer_copy(rfa)
         out_c = (c_int16 * frame_size)()
         self._pyaec_lib.AecCancelEcho(
             self._aec._aec, mic_c, ref_c, out_c, frame_size,
         )
-        out = array.array("h", list(out_c)).tobytes()
-
-        # Defensive: if pyaec ever returns mismatched length, pad/truncate to input length.
-        if len(out) != len(audio):
-            out = (out + b"\x00" * len(audio))[:len(audio)]
-        return out
+        return bytes(out_c)
 
 
 def make_aec_filter(
     engine: str,
     *,
-    sample_rate: int,
     reference: ReferenceBuffer,
-) -> Optional[BaseAudioFilter]:
+) -> BaseAudioFilter | None:
     """Instantiate an AEC filter for the given engine name.
 
     "off" returns None (caller installs no filter).

@@ -6,7 +6,12 @@ import sys
 
 import pytest
 
-from tend.audio.aec import ReferenceBuffer, resolve_aec_engine
+from tend.audio.aec import (
+    ReferenceBuffer,
+    SpeexAECFilter,
+    make_aec_filter,
+    resolve_aec_engine,
+)
 from tend.config import Settings
 
 
@@ -83,8 +88,6 @@ def test_resolve_aec_engine_auto_macos_webrtc_missing(monkeypatch):
 # SpeexAECFilter + make_aec_filter
 # ---------------------------------------------------------------------------
 
-from tend.audio.aec import SpeexAECFilter, make_aec_filter
-
 
 @pytest.mark.asyncio
 async def test_speex_filter_passthrough_when_reference_empty():
@@ -120,12 +123,12 @@ async def test_speex_filter_round_trip_length_preserved():
 
 def test_make_aec_filter_off_returns_none():
     rb = ReferenceBuffer()
-    assert make_aec_filter("off", sample_rate=16000, reference=rb) is None
+    assert make_aec_filter("off", reference=rb) is None
 
 
 def test_make_aec_filter_speex_returns_filter():
     rb = ReferenceBuffer()
-    f = make_aec_filter("speex", sample_rate=16000, reference=rb)
+    f = make_aec_filter("speex", reference=rb)
     assert isinstance(f, SpeexAECFilter)
 
 
@@ -133,4 +136,26 @@ def test_make_aec_filter_webrtc_unavailable_raises(monkeypatch):
     monkeypatch.setattr("tend.audio.aec._webrtc_importable", lambda: False)
     rb = ReferenceBuffer()
     with pytest.raises(RuntimeError, match="webrtc-audio-processing"):
-        make_aec_filter("webrtc-aec3", sample_rate=16000, reference=rb)
+        make_aec_filter("webrtc-aec3", reference=rb)
+
+
+def test_make_aec_filter_unknown_engine_raises():
+    rb = ReferenceBuffer()
+    with pytest.raises(ValueError, match="Unknown aec engine"):
+        make_aec_filter("not-an-engine", reference=rb)
+
+
+@pytest.mark.asyncio
+async def test_speex_filter_stop_releases_resources():
+    f = SpeexAECFilter(reference=ReferenceBuffer())
+    await f.start(sample_rate=16000)
+    assert f._aec is not None
+    assert f._pyaec_lib is not None
+
+    await f.stop()
+
+    assert f._aec is None
+    assert f._pyaec_lib is None
+
+    # Second call must be idempotent (no exception).
+    await f.stop()
