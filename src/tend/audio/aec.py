@@ -206,7 +206,7 @@ class SpeexAECFilter(BaseAudioFilter):
                 if mic_rms > 0 and out_rms > 0
                 else 0.0
             )
-            logger.info(
+            logger.debug(
                 f"[aec.speex] call={self._call_count} "
                 f"mic_rms={mic_rms:.0f} ref_rms={ref_rms:.0f} "
                 f"out_rms={out_rms:.0f} suppression={suppression_db:+.1f}dB"
