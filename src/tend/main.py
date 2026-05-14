@@ -41,6 +41,32 @@ from tend.webhook import WebhookServer, build_app
 from tend.workers.general import GeneralWorker
 
 
+def _check_macos_minimum() -> None:
+    """Exit cleanly if running on macOS older than 14 (Sonoma).
+
+    Several runtime deps (onnxruntime arm64 wheels, AVSpeechSynthesizer
+    streaming API) require macOS 14+. Catching this at startup gives a
+    clear error instead of a downstream import or attribute error.
+    """
+    import platform
+
+    if sys.platform != "darwin":
+        return
+    ver = platform.mac_ver()[0]
+    if not ver:
+        return
+    try:
+        major = int(ver.split(".")[0])
+    except (ValueError, IndexError):
+        return
+    if major < 14:
+        print(
+            f"tend requires macOS 14 (Sonoma) or later; detected {ver}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def _setup_logging() -> None:
     logger.remove()
     logger.add(sys.stderr, level="INFO")
@@ -181,6 +207,7 @@ async def _run() -> None:
 
 
 def main() -> None:
+    _check_macos_minimum()
     _setup_logging()
 
     state = paths.detect_workspace_state()
