@@ -316,48 +316,88 @@ class AVSpeechSynthesizerTTSService(TTSService):
             if voice is not None:
                 utt.setVoice_(voice)
 
+        call_count = {"n": 0, "bytes": 0}
+
         def callback(buffer):
-            if buffer is None:
-                loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
-                return
-
-            fmt = buffer.format()
-            channels = fmt.channelCount()
-            native_sr = int(fmt.sampleRate())
-            n_frames = buffer.frameLength()
-
-            # Try int16ChannelData first (less common but cheaper).
-            i16 = buffer.int16ChannelData()
-            if i16 is not None:
-                i16_bytes = _ptr_to_bytes(i16[0], n_frames * 2)
-            else:
-                # Fall back to floatChannelData → convert.
-                fc = buffer.floatChannelData()
-                if fc is None:
-                    loop.call_soon_threadsafe(queue.put_nowait, b"")
+            call_count["n"] += 1
+            try:
+                if buffer is None:
+                    logger.debug(f"[avspeech] callback fired with buffer=None (call #{call_count['n']}); sending sentinel")
+                    loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
                     return
-                floats = array.array("f")
-                floats.frombytes(_ptr_to_bytes(fc[0], n_frames * 4))
-                i16_bytes = array.array(
-                    "h",
-                    [max(-32768, min(32767, int(x * 32767))) for x in floats],
-                ).tobytes()
 
-            # Resample if needed
-            if native_sr != self._sample_rate:
-                i16_bytes, _ = audioop.ratecv(
-                    i16_bytes, 2, channels, native_sr, self._sample_rate, None,
+                fmt = buffer.format()
+                channels = fmt.channelCount()
+                native_sr = int(fmt.sampleRate())
+                n_frames = buffer.frameLength()
+
+                logger.debug(
+                    f"[avspeech] callback #{call_count['n']}: "
+                    f"buffer={type(buffer).__name__} channels={channels} "
+                    f"native_sr={native_sr} n_frames={n_frames}"
                 )
-            loop.call_soon_threadsafe(queue.put_nowait, i16_bytes)
 
+                if n_frames == 0:
+                    logger.debug(f"[avspeech] zero-length buffer treated as EOF; sending sentinel")
+                    loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
+                    return
+
+                # Try int16ChannelData first (less common but cheaper).
+                i16 = buffer.int16ChannelData()
+                if i16 is not None:
+                    logger.debug(f"[avspeech] using int16ChannelData path; i16[0] type={type(i16[0]).__name__}")
+                    i16_bytes = _ptr_to_bytes(i16[0], n_frames * 2)
+                else:
+                    # Fall back to floatChannelData → convert.
+                    fc = buffer.floatChannelData()
+                    logger.debug(f"[avspeech] using floatChannelData path; fc type={type(fc).__name__}")
+                    if fc is None:
+                        logger.warning("[avspeech] floatChannelData() returned None; yielding empty")
+                        loop.call_soon_threadsafe(queue.put_nowait, b"")
+                        return
+                    floats = array.array("f")
+                    raw = _ptr_to_bytes(fc[0], n_frames * 4)
+                    logger.debug(f"[avspeech] raw float bytes len={len(raw)}; first 16: {raw[:16].hex()}")
+                    floats.frombytes(raw)
+                    i16_bytes = array.array(
+                        "h",
+                        [max(-32768, min(32767, int(x * 32767))) for x in floats],
+                    ).tobytes()
+
+                # Resample if needed
+                if native_sr != self._sample_rate:
+                    logger.debug(f"[avspeech] resampling {native_sr} -> {self._sample_rate}")
+                    i16_bytes, _ = audioop.ratecv(
+                        i16_bytes, 2, channels, native_sr, self._sample_rate, None,
+                    )
+
+                call_count["bytes"] += len(i16_bytes)
+                logger.debug(
+                    f"[avspeech] emitting {len(i16_bytes)} int16 bytes "
+                    f"(running total {call_count['bytes']}); "
+                    f"first 16 bytes: {i16_bytes[:16].hex()}"
+                )
+                loop.call_soon_threadsafe(queue.put_nowait, i16_bytes)
+            except Exception as e:
+                logger.exception(f"[avspeech] callback error: {e!r}")
+                loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
+
+        logger.debug(f"[avspeech] starting writeUtterance for {len(text)}-char text with voice={self._voice_identifier or '(default)'}")
         synth.writeUtterance_toBufferCallback_(utt, callback)
 
+        chunks_yielded = 0
         while True:
             chunk = await queue.get()
             if chunk is SENTINEL:
                 break
             if chunk:
+                chunks_yielded += 1
                 yield chunk
+
+        logger.info(
+            f"[avspeech] run complete: {call_count['n']} callbacks, "
+            f"{call_count['bytes']} total bytes, {chunks_yielded} chunks yielded"
+        )
 
     async def run_tts(self, text: str, context_id: str):
         """Pipecat 1.1 entry point.
