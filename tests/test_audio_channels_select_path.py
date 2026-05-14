@@ -85,3 +85,26 @@ def test_audio_path_has_transport_factory_field_with_default(monkeypatch):
     path = select_audio_path(settings, aec_filter_factory=_stub_factory)
 
     assert path.transport_factory is LocalAudioTransport
+
+
+def test_macos_vpio_engine_selects_avaudio_transport(monkeypatch):
+    """When aec_engine resolves to 'vpio' on macOS, AudioPath uses
+    AVAudioTransport as the factory and has no AEC pair (VPIO handles
+    AEC upstream of pipecat)."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    # resolve_aec_engine doesn't accept 'vpio' until Task 14 — monkeypatch it.
+    import tend.audio.channels as channels_mod
+    monkeypatch.setattr(channels_mod, "resolve_aec_engine", lambda s: "vpio")
+
+    settings = Settings(_env_file=None)
+
+    def boom(_):
+        raise AssertionError("AEC factory should not run for vpio engine")
+
+    path = select_audio_path(settings, aec_filter_factory=boom)
+
+    from tend.audio.av_audio import AVAudioTransport
+    assert path.in_channels == 1
+    assert path.pre_vad_processors == ()
+    assert path.aec is None
+    assert path.transport_factory is AVAudioTransport

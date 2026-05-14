@@ -33,7 +33,7 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.local.audio import LocalAudioTransport
 
-from tend.audio.aec import ReferenceBuffer
+from tend.audio.aec import ReferenceBuffer, resolve_aec_engine
 from tend.config import Settings
 
 
@@ -110,6 +110,17 @@ def select_audio_path(
     (the default wires up the real AEC engine). Tests pass a stub factory
     instead so they don't pull in pyaec/webrtc.
     """
+    # VPIO short-circuit: AVAudioTransport handles AEC upstream of pipecat,
+    # so we return no AEC pair and do NOT invoke the factory.
+    if resolve_aec_engine(settings) == "vpio":
+        from tend.audio.av_audio import AVAudioTransport
+        return AudioPath(
+            in_channels=1,
+            pre_vad_processors=(),
+            aec=None,
+            transport_factory=AVAudioTransport,
+        )
+
     explicit = settings.mic_channels
     if explicit == 2 or (explicit is None and sys.platform != "darwin"):
         return AudioPath(
