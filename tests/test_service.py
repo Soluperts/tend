@@ -1,4 +1,4 @@
-"""tend.service — systemd user-unit install/uninstall (Linux only)."""
+"""tend.service — systemd user-unit install/uninstall (Linux paths)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,28 @@ from unittest.mock import MagicMock
 
 import pytest
 
+
+# ---------------------------------------------------------------------------
+# Helpers — force Linux platform so tests are platform-independent
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def force_linux(monkeypatch):
+    """Make every test in this file see sys.platform == 'linux'."""
+    monkeypatch.setattr(sys, "platform", "linux")
+
+
+def _seed_unit(tmp_path):
+    """Create a fake systemd unit file under tmp_path's HOME."""
+    p = tmp_path / ".config" / "systemd" / "user" / "tend.service"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("[Unit]\n")
+    return p
+
+
+# ---------------------------------------------------------------------------
+# render_unit / unit_path
+# ---------------------------------------------------------------------------
 
 def test_render_substitutes_python_and_tend_home(tmp_path, monkeypatch):
     monkeypatch.setenv("TEND_HOME", str(tmp_path))
@@ -22,6 +44,10 @@ def test_unit_path_under_user_systemd(monkeypatch, tmp_path):
     from tend.service import unit_path
     assert unit_path() == tmp_path / ".config" / "systemd" / "user" / "tend.service"
 
+
+# ---------------------------------------------------------------------------
+# install
+# ---------------------------------------------------------------------------
 
 def test_install_writes_unit_and_calls_daemon_reload(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -62,6 +88,10 @@ def test_install_refuses_to_overwrite_without_force(monkeypatch, tmp_path):
         install(force=False)
 
 
+# ---------------------------------------------------------------------------
+# uninstall
+# ---------------------------------------------------------------------------
+
 def test_uninstall_removes_unit_file(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr("subprocess.run", lambda *a, **kw: MagicMock(returncode=0))
@@ -80,23 +110,9 @@ def test_uninstall_when_not_installed_is_noop(monkeypatch, tmp_path):
     uninstall()
 
 
-def test_install_on_macos_raises_not_implemented(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr("sys.platform", "darwin")
-    from tend.service import install, MacOSNotSupported
-    with pytest.raises(MacOSNotSupported):
-        install()
-
-
-# start / stop / status -----------------------------------------------------
-
-
-def _seed_unit(tmp_path):
-    p = tmp_path / ".config" / "systemd" / "user" / "tend.service"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text("[Unit]\n")
-    return p
-
+# ---------------------------------------------------------------------------
+# start / stop / status
+# ---------------------------------------------------------------------------
 
 def test_start_invokes_systemctl_start(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -191,20 +207,3 @@ def test_status_unknown_when_stdout_empty(monkeypatch, tmp_path):
     from tend.service import status
     state, _ = status()
     assert state == "unknown"
-
-
-def test_start_on_macos_raises(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    _seed_unit(tmp_path)
-    monkeypatch.setattr("sys.platform", "darwin")
-    from tend.service import start, MacOSNotSupported
-    with pytest.raises(MacOSNotSupported):
-        start()
-
-
-def test_status_on_macos_raises(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr("sys.platform", "darwin")
-    from tend.service import status, MacOSNotSupported
-    with pytest.raises(MacOSNotSupported):
-        status()
