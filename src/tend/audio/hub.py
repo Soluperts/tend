@@ -129,6 +129,17 @@ class Hub(BaseAgent):
     async def build_pipeline(self) -> Pipeline:
         path = select_audio_path(self._settings)
 
+        from loguru import logger as _logger
+        _logger.info(
+            f"[hub] AudioPath: in_channels={path.in_channels} "
+            f"pre_vad={[type(p).__name__ for p in path.pre_vad_processors]} "
+            f"aec={'AECPair' if path.aec is not None else 'None'}"
+        )
+        if path.aec is not None:
+            _logger.info(
+                f"[hub] AEC filter type: {type(path.aec.filter).__name__}"
+            )
+
         params = LocalAudioTransportParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
@@ -136,6 +147,11 @@ class Hub(BaseAgent):
             audio_in_channels=path.in_channels,
             audio_in_filter=path.aec.filter if path.aec else None,
             audio_out_sample_rate=self._tts_sample_rate,
+        )
+
+        _logger.info(
+            f"[hub] LocalAudioTransportParams.audio_in_filter is "
+            f"{type(params.audio_in_filter).__name__ if params.audio_in_filter else 'None'}"
         )
 
         # When AEC is on, use a transport whose output() taps PCM into the
