@@ -25,7 +25,12 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
+    LLMUserAggregatorParams,
 )
+from pipecat.turns.user_start.vad_user_turn_start_strategy import (
+    VADUserTurnStartStrategy,
+)
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.services.stt_service import STTService
 from pipecat.services.tts_service import TTSService
@@ -167,7 +172,21 @@ class Hub(BaseAgent):
         else:
             transport = LocalAudioTransport(params)
 
-        aggregators = LLMContextAggregatorPair(self._context)
+        # Drop TranscriptionUserTurnStartStrategy from the user-turn detector.
+        # Default is [VAD, Transcription]; Deepgram transcribes AEC residual
+        # ("I'm Jan", "Nice to meet") as user speech and fires a turn-start
+        # interruption, which derails the bot mid-sentence. VAD with our
+        # tightened thresholds is the cleaner barge-in signal — the user
+        # has to actually make audible sound, not just whatever fragment
+        # the cloud STT decides to transcribe from echo residual.
+        aggregators = LLMContextAggregatorPair(
+            self._context,
+            user_params=LLMUserAggregatorParams(
+                user_turn_strategies=UserTurnStrategies(
+                    start=[VADUserTurnStartStrategy()],
+                ),
+            ),
+        )
 
         # exclude_frames keeps Hub-originated TTSSpeakFrames (e.g. the wake-word
         # ack "Yes?") in Hub's pipeline so they reach TTS instead of being
