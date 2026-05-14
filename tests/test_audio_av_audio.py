@@ -197,3 +197,78 @@ async def test_input_transport_start_enables_vpio_and_installs_tap():
     tap_idx = call_log.index("installTapOnBus")
     start_idx = call_log.index("startAndReturnError")
     assert vpio_idx < tap_idx < start_idx
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="AVFoundation requires macOS")
+@pytest.mark.asyncio
+async def test_input_transport_tap_callback_pushes_frame_with_gain(monkeypatch):
+    """When the tap callback fires from a worker thread, the bridge pushes
+    an InputAudioRawFrame whose PCM is the input × 4 (post-tap +12 dB gain)."""
+    import asyncio
+    import struct
+    import threading
+    from unittest.mock import MagicMock
+
+    from pipecat.frames.frames import InputAudioRawFrame, StartFrame
+    from tend.audio.av_audio import AVAudioInputTransport, AVAudioTransportParams
+
+    fake_engine = MagicMock()
+    fake_engine.startAndReturnError_.return_value = (True, None)
+    fake_input = MagicMock()
+    fake_input.setVoiceProcessingEnabled_error_.return_value = (True, None)
+    fake_input.outputFormatForBus_.return_value = MagicMock(
+        sampleRate=lambda: 48000.0, channelCount=lambda: 9,
+    )
+    fake_engine.inputNode.return_value = fake_input
+
+    # Stub the conversion path. Pre-gain PCM samples; expect 4× after gain.
+    raw_pcm = struct.pack("<5h", 100, 200, 300, 400, 500)
+    expected_after_gain = struct.pack("<5h", 400, 800, 1200, 1600, 2000)
+    monkeypatch.setattr(
+        "tend.audio.av_audio._make_input_converter",
+        lambda *a, **kw: MagicMock(),
+    )
+    monkeypatch.setattr(
+        "tend.audio.av_audio._convert_to_int16_bytes",
+        lambda *a, **kw: raw_pcm,
+    )
+
+    params = AVAudioTransportParams(
+        audio_in_enabled=True,
+        audio_out_enabled=False,
+        audio_in_sample_rate=16000,
+        audio_in_channels=1,
+        audio_out_sample_rate=16000,
+    )
+    inp = AVAudioInputTransport(params, engine=fake_engine)
+
+    # Capture pushed frames without depending on real TaskManager init.
+    pushed_frames = []
+    async def fake_push(frame):
+        pushed_frames.append(frame)
+    monkeypatch.setattr(inp, "push_audio_frame", fake_push)
+    # Avoid pipecat's TaskManager-dependent set_transport_ready.
+    # Must be an async callable because start() awaits it.
+    async def fake_set_transport_ready(_frame):
+        pass
+    monkeypatch.setattr(inp, "set_transport_ready", fake_set_transport_ready)
+
+    frame = StartFrame(audio_in_sample_rate=16000, audio_out_sample_rate=16000)
+    await inp.start(frame)
+
+    install_call = fake_input.installTapOnBus_bufferSize_format_block_.call_args
+    tap_callback = install_call[0][3]  # 4th positional arg is the block
+
+    # Fire from a worker thread (CoreAudio thread simulation), then yield
+    # to the asyncio loop so run_coroutine_threadsafe's scheduled coro runs.
+    fake_buf = MagicMock()
+    fake_time = MagicMock()
+    threading.Thread(target=tap_callback, args=(fake_buf, fake_time)).start()
+    for _ in range(10):
+        await asyncio.sleep(0.01)
+
+    assert len(pushed_frames) == 1
+    assert isinstance(pushed_frames[0], InputAudioRawFrame)
+    assert pushed_frames[0].audio == expected_after_gain
+    assert pushed_frames[0].sample_rate == 16000
+    assert pushed_frames[0].num_channels == 1
