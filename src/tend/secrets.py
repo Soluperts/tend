@@ -62,6 +62,25 @@ def get_secret(key: str) -> str | None:
     return _read_dotenv(key)
 
 
+def load_into_env() -> None:
+    """Copy keyring/dotenv-stored secrets into os.environ.
+
+    Pydantic-settings reads secrets from env vars only — it doesn't know
+    about the keyring. Call this once at boot, before Settings() is
+    constructed, so secrets saved by `tend setup` to the OS keyring on
+    macOS / Linux are visible to the rest of the program.
+
+    Idempotent: env vars that are already set are not overwritten, so
+    explicit shell exports still win over stored values.
+    """
+    for key in _KNOWN:
+        if os.environ.get(key):
+            continue
+        v = get_secret(key)
+        if v:
+            os.environ[key] = v
+
+
 def secret_backend(key: str) -> Literal["env", "keyring", "dotenv"] | None:
     """Where the secret currently lives. None if unset."""
     if os.environ.get(key):

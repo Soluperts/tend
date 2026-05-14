@@ -164,4 +164,12 @@ class Settings(BaseSettings):
         return (init_settings, env_settings, dotenv, toml, file_secret_settings)
 
 
+# Pull keyring-stored secrets into os.environ before Settings is built. Pydantic
+# only reads from env vars + dotenv; without this step, secrets saved by
+# `tend setup` to the OS keyring (the default on macOS) are invisible at boot
+# and the Brain LLM preflight reports "ANTHROPIC_API_KEY not set."
+from tend.secrets import load_into_env as _load_secrets_into_env
+
+_load_secrets_into_env()
+
 settings = Settings()
