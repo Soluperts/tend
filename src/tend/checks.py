@@ -277,16 +277,10 @@ def check_aec_engine(settings) -> CheckResult:
     if resolved == "off":
         return CheckResult("aec_engine", "ok", "AEC disabled (off)")
 
+    if resolved == "vpio":
+        return CheckResult("aec_engine", "ok", "AEC: vpio (macOS Voice Processing I/O)")
+
     if resolved == "speex":
-        if configured == "auto" and _sys.platform == "darwin" and not _webrtc_importable():
-            return CheckResult(
-                "aec_engine", "warn",
-                "AEC: speex (fallback; webrtc-audio-processing not installed)",
-                remediation=(
-                    "for state-of-the-art AEC: brew install webrtc-audio-processing "
-                    "&& pipx inject tend aec-webrtc"
-                ),
-            )
         return CheckResult("aec_engine", "ok", "AEC: speex")
 
     if resolved == "webrtc-aec3":

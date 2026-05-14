@@ -23,14 +23,13 @@ def test_check_aec_engine_off(monkeypatch):
     assert "off" in r.detail.lower()
 
 
-def test_check_aec_engine_auto_macos_webrtc_missing(monkeypatch):
+def test_check_aec_engine_auto_macos_resolves_to_vpio(monkeypatch):
+    """macOS + auto resolves to vpio regardless of webrtc availability."""
     monkeypatch.setattr(sys, "platform", "darwin")
-    monkeypatch.setattr("tend.audio.aec._webrtc_importable", lambda: False)
     s = Settings(_env_file=None, aec_engine="auto")
     r = check_aec_engine(s)
-    assert r.status == "warn"
-    assert "speex" in r.detail.lower()
-    assert "aec-webrtc" in (r.remediation or "")
+    assert r.status == "ok"
+    assert "vpio" in r.detail.lower()
 
 
 def test_check_aec_engine_explicit_webrtc_missing(monkeypatch):

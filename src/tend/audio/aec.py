@@ -244,13 +244,21 @@ def make_aec_filter(
 def resolve_aec_engine(settings) -> str:
     """Resolve `[audio] aec_engine` to a concrete engine name.
 
-    Returns one of: "off", "speex", "webrtc-aec3".
+    Returns one of: "off", "vpio", "speex", "webrtc-aec3".
 
     Note: `settings` is intentionally untyped to keep this module free of
     a `tend.config.Settings` import, which would pull pydantic-settings
     into every AEC test. Any object with an `aec_engine` attribute works.
     """
     engine = (settings.aec_engine or "auto").lower()
+
+    if engine == "vpio":
+        if sys.platform != "darwin":
+            raise ValueError(
+                "aec_engine='vpio' is only supported on macOS. "
+                "On Linux use 'speex' (or 'off' if your mic has hardware AEC)."
+            )
+        return "vpio"
 
     if engine in ("off", "speex", "webrtc-aec3"):
         return engine
@@ -261,7 +269,7 @@ def resolve_aec_engine(settings) -> str:
 
     # auto resolution
     if sys.platform == "darwin":
-        return "webrtc-aec3" if _webrtc_importable() else "speex"
+        return "vpio"
     logger.info(
         "aec_engine=auto on %s resolved to off — assumes hardware AEC "
         "(e.g. XVF3800). Set [audio] aec_engine=speex to override.",

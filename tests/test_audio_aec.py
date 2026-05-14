@@ -65,23 +65,11 @@ def test_resolve_aec_engine_auto_linux_returns_off(monkeypatch):
     assert resolve_aec_engine(settings) == "off"
 
 
-def test_resolve_aec_engine_auto_macos_webrtc_present(monkeypatch):
+def test_resolve_aec_engine_auto_macos_returns_vpio(monkeypatch):
+    """macOS auto always resolves to vpio regardless of webrtc availability."""
     monkeypatch.setattr(sys, "platform", "darwin")
-    # Force the import probe to succeed
-    monkeypatch.setattr(
-        "tend.audio.aec._webrtc_importable", lambda: True,
-    )
     settings = Settings(_env_file=None, aec_engine="auto")
-    assert resolve_aec_engine(settings) == "webrtc-aec3"
-
-
-def test_resolve_aec_engine_auto_macos_webrtc_missing(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "darwin")
-    monkeypatch.setattr(
-        "tend.audio.aec._webrtc_importable", lambda: False,
-    )
-    settings = Settings(_env_file=None, aec_engine="auto")
-    assert resolve_aec_engine(settings) == "speex"
+    assert resolve_aec_engine(settings) == "vpio"
 
 
 # ---------------------------------------------------------------------------
@@ -159,3 +147,48 @@ async def test_speex_filter_stop_releases_resources():
 
     # Second call must be idempotent (no exception).
     await f.stop()
+
+
+# ---------------------------------------------------------------------------
+# resolve_aec_engine — vpio support (Task 14)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_aec_engine_macos_auto_returns_vpio(monkeypatch):
+    """macOS + auto should resolve to vpio (the new default)."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    class _S:
+        aec_engine = "auto"
+
+    assert resolve_aec_engine(_S()) == "vpio"
+
+
+def test_resolve_aec_engine_macos_explicit_vpio_passes_through(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    class _S:
+        aec_engine = "vpio"
+
+    assert resolve_aec_engine(_S()) == "vpio"
+
+
+def test_resolve_aec_engine_vpio_on_linux_raises(monkeypatch):
+    """Explicit vpio on Linux is a user error — raise with a clear message."""
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    class _S:
+        aec_engine = "vpio"
+
+    with pytest.raises(ValueError, match="vpio.*only supported on macOS"):
+        resolve_aec_engine(_S())
+
+
+def test_resolve_aec_engine_macos_explicit_speex_passes_through(monkeypatch):
+    """User can still opt out of VPIO by explicitly picking speex."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    class _S:
+        aec_engine = "speex"
+
+    assert resolve_aec_engine(_S()) == "speex"
