@@ -98,7 +98,11 @@ class SpeexAECFilter(BaseAudioFilter):
     # happy with any matched-length pair but frame size 320 matches
     # pipecat's transport chunking.
     _FRAME_SAMPLES = 320
-    _FILTER_LENGTH = 320 * 8  # ~160 ms tail; covers desk-distance echo + hw latency
+    # Filter length sets how much echo tail the adaptive filter can model.
+    # Speex docs recommend 100-500 ms; the longer the better up to a CPU
+    # cost. 320 ms covers MacBook built-in speaker→mic acoustics plus
+    # PortAudio's ~30-50 ms output buffer latency with comfortable margin.
+    _FILTER_LENGTH = 320 * 16  # 320 ms tail
 
     def __init__(self, reference: ReferenceBuffer):
         self._reference = reference
