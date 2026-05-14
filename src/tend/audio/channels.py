@@ -1,30 +1,37 @@
 """Audio path selection for the Hub pipeline.
 
-This module exposes two things:
+This module exposes:
 
   - `StereoToMonoLeft`: a frame processor that converts the
-    reSpeaker XVF3800's 2-channel UAC2 stream into mono by
-    keeping the left (AEC-processed) channel and dropping the
-    right (echo reference).
+    reSpeaker XVF3800's 2-channel UAC2 stream into mono by keeping
+    the left (AEC-processed) channel and dropping the right (echo
+    reference).
+
+  - `AECPair`: a filter + ReferenceBuffer pair returned by the AEC
+    factory. The Hub uses the filter on the input side and feeds
+    the same reference buffer from the output side via
+    `OutputAudioCapture`.
 
   - `AudioPath` + `select_audio_path()`: platform-aware dispatch
     that decides the transport's input channel count, the pre-VAD
-    processor chain, and whether an AEC filter is installed. The
-    Hub consumes whatever this returns instead of hardcoding
-    XVF3800 assumptions.
+    processor chain, and whether an AEC pair is installed.
+
+  - `_default_aec_filter_factory`: production callable that
+    `select_audio_path` uses when no explicit factory is passed.
 """
 
 from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable
 
 import numpy as np
 from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
 from pipecat.frames.frames import Frame, InputAudioRawFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
+from tend.audio.aec import ReferenceBuffer
 from tend.config import Settings
 
 
@@ -54,37 +61,44 @@ class StereoToMonoLeft(FrameProcessor):
 
 
 @dataclass(frozen=True)
+class AECPair:
+    """Pairs an AEC filter with the ReferenceBuffer that feeds it.
+
+    The factory returns this so the Hub can construct OutputAudioCapture
+    against the same buffer the filter reads from. Encodes the
+    filter↔reference matched-pair invariant in the type.
+    """
+    filter: BaseAudioFilter
+    reference: ReferenceBuffer
+
+
+@dataclass(frozen=True)
 class AudioPath:
     """Result of platform-aware audio-path selection."""
     in_channels: int
     pre_vad_processors: tuple[FrameProcessor, ...]
-    aec_filter: Optional[BaseAudioFilter]
+    aec: AECPair | None
 
 
-def _default_aec_filter_factory(settings: Settings) -> Optional[BaseAudioFilter]:
-    """Build the AEC filter using the production engine resolver.
+def _default_aec_filter_factory(settings: Settings) -> AECPair | None:
+    """Build the AEC pair using the production engine resolver.
 
-    Production callers don't pass this explicitly — `select_audio_path`
-    defaults to it. Tests pass a stub factory instead so they don't
-    pull in pyaec/webrtc.
+    Returns None when AEC is disabled (e.g. `aec_engine="off"` or the
+    `auto` resolver settles on `"off"` on Linux).
     """
-    from tend.audio.aec import ReferenceBuffer, make_aec_filter, resolve_aec_engine
+    from tend.audio.aec import make_aec_filter, resolve_aec_engine
 
     engine = resolve_aec_engine(settings)
     if engine == "off":
         return None
-    # Each Hub gets its own buffer; OutputAudioCapture writes into it.
     reference = ReferenceBuffer()
-    f = make_aec_filter(engine, reference=reference)
-    # Attach the buffer so the Hub can find it to construct OutputAudioCapture.
-    f._tend_reference = reference  # type: ignore[attr-defined]
-    return f
+    return AECPair(filter=make_aec_filter(engine, reference=reference), reference=reference)
 
 
 def select_audio_path(
     settings: Settings,
     *,
-    aec_filter_factory: Callable[[Settings], Optional[BaseAudioFilter]] = _default_aec_filter_factory,
+    aec_filter_factory: Callable[[Settings], AECPair | None] = _default_aec_filter_factory,
 ) -> AudioPath:
     """Return the audio-path tuple appropriate for this platform.
 
@@ -98,10 +112,10 @@ def select_audio_path(
         return AudioPath(
             in_channels=2,
             pre_vad_processors=(StereoToMonoLeft(),),
-            aec_filter=aec_filter_factory(settings),
+            aec=aec_filter_factory(settings),
         )
     return AudioPath(
         in_channels=1,
         pre_vad_processors=(),
-        aec_filter=aec_filter_factory(settings),
+        aec=aec_filter_factory(settings),
     )

@@ -32,8 +32,12 @@ from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransp
 from pipecat_subagents.agents import BaseAgent
 from pipecat_subagents.bus import AgentBus, BusBridgeProcessor
 
+from pipecat.processors.frame_processor import FrameProcessor
+
+from tend.audio.channels import select_audio_path
 from tend.audio.gates import OpenWakeWordGate, SleepPhraseGate
 from tend.audio.logging import InputLatencyLogger, OutputLatencyLogger
+from tend.audio.output_tap import OutputAudioCapture
 from tend.config import Settings
 
 VOICE_RULES = (
@@ -125,9 +129,6 @@ class Hub(BaseAgent):
         )
 
     async def build_pipeline(self) -> Pipeline:
-        from tend.audio.channels import select_audio_path
-        from tend.audio.output_tap import OutputAudioCapture
-
         path = select_audio_path(self._settings)
 
         transport = LocalAudioTransport(
@@ -136,7 +137,7 @@ class Hub(BaseAgent):
                 audio_out_enabled=True,
                 audio_in_sample_rate=self._settings.sample_rate,
                 audio_in_channels=path.in_channels,
-                audio_in_filter=path.aec_filter,
+                audio_in_filter=path.aec.filter if path.aec else None,
                 audio_out_sample_rate=self._tts_sample_rate,
             )
         )
@@ -153,9 +154,11 @@ class Hub(BaseAgent):
             name=f"{self.name}::voice-bridge",
         )
 
-        output_tap = []
-        if path.aec_filter is not None and hasattr(path.aec_filter, "_tend_reference"):
-            output_tap = [OutputAudioCapture(reference=path.aec_filter._tend_reference)]
+        output_tap: list[FrameProcessor] = (
+            [OutputAudioCapture(reference=path.aec.reference)]
+            if path.aec is not None
+            else []
+        )
 
         return Pipeline([
             transport.input(),
