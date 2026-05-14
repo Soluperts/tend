@@ -32,12 +32,10 @@ from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransp
 from pipecat_subagents.agents import BaseAgent
 from pipecat_subagents.bus import AgentBus, BusBridgeProcessor
 
-from pipecat.processors.frame_processor import FrameProcessor
 
 from tend.audio.channels import select_audio_path
 from tend.audio.gates import OpenWakeWordGate, SleepPhraseGate
 from tend.audio.logging import InputLatencyLogger, OutputLatencyLogger
-from tend.audio.output_tap import OutputAudioCapture
 from tend.config import Settings
 
 VOICE_RULES = (
@@ -131,16 +129,26 @@ class Hub(BaseAgent):
     async def build_pipeline(self) -> Pipeline:
         path = select_audio_path(self._settings)
 
-        transport = LocalAudioTransport(
-            LocalAudioTransportParams(
-                audio_in_enabled=True,
-                audio_out_enabled=True,
-                audio_in_sample_rate=self._settings.sample_rate,
-                audio_in_channels=path.in_channels,
-                audio_in_filter=path.aec.filter if path.aec else None,
-                audio_out_sample_rate=self._tts_sample_rate,
-            )
+        params = LocalAudioTransportParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            audio_in_sample_rate=self._settings.sample_rate,
+            audio_in_channels=path.in_channels,
+            audio_in_filter=path.aec.filter if path.aec else None,
+            audio_out_sample_rate=self._tts_sample_rate,
         )
+
+        # When AEC is on, use a transport whose output() taps PCM into the
+        # AEC reference buffer at *PortAudio playback rate* (the blocking
+        # write naturally throttles). A FrameProcessor sitting before
+        # transport.output() would see synthesis-rate bursts (3x realtime
+        # for AVSpeech) — completely misaligned with what the mic actually
+        # hears, so the AEC reference doesn't correlate with the echo.
+        if path.aec is not None:
+            from tend.audio.transport import RefTappedLocalAudioTransport
+            transport = RefTappedLocalAudioTransport(params, reference=path.aec.reference)
+        else:
+            transport = LocalAudioTransport(params)
 
         aggregators = LLMContextAggregatorPair(self._context)
 
@@ -152,12 +160,6 @@ class Hub(BaseAgent):
             agent_name=self.name,
             exclude_frames=(TTSSpeakFrame,),
             name=f"{self.name}::voice-bridge",
-        )
-
-        output_tap: list[FrameProcessor] = (
-            [OutputAudioCapture(reference=path.aec.reference)]
-            if path.aec is not None
-            else []
         )
 
         return Pipeline([
@@ -183,7 +185,6 @@ class Hub(BaseAgent):
             bridge,
             self._tts,
             OutputLatencyLogger(),
-            *output_tap,
             transport.output(),
             aggregators.assistant(),
         ])
