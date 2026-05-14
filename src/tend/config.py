@@ -97,7 +97,7 @@ class Settings(BaseSettings):
     # Audio
     sample_rate: int = 16000
 
-    # Audio path & AEC (macOS port)
+    # Audio path & AEC
     mic_channels: int | None = None         # platform default: 1 on macOS, 2 on Linux
     aec_engine: str = "auto"                # auto | webrtc-aec3 | speex | off
 

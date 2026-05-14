@@ -1,20 +1,22 @@
-"""Stereo→mono channel selector for the XVF3800's 2-channel input.
+"""Audio path selection for the Hub pipeline.
 
-The reSpeaker XVF3800 exposes a 2-channel UAC2 stream:
-  - LEFT  channel: AEC-processed audio (clean, suitable for STT).
-  - RIGHT channel: speaker-side reference signal (raw echo).
+This module exposes two things:
 
-Capturing both and downmixing — which is what PortAudio + ALSA `plughw`
-does for a mono-requesting client — defeats the chip's AEC by averaging
-the clean processed audio with the reference echo. This processor sits
-just after `transport.input()` and converts each stereo
-`InputAudioRawFrame` into a mono frame containing the left channel only.
+  - `StereoToMonoLeft`: a frame processor that converts the
+    reSpeaker XVF3800's 2-channel UAC2 stream into mono by
+    keeping the left (AEC-processed) channel and dropping the
+    right (echo reference).
 
-Frames that are not stereo `InputAudioRawFrame`s pass through unchanged.
+  - `AudioPath` + `select_audio_path()`: platform-aware dispatch
+    that decides the transport's input channel count, the pre-VAD
+    processor chain, and whether an AEC filter is installed. The
+    Hub consumes whatever this returns instead of hardcoding
+    XVF3800 assumptions.
 """
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -62,7 +64,7 @@ class AudioPath:
 def select_audio_path(
     settings: Settings,
     *,
-    aec_filter_factory: Callable[..., Optional[BaseAudioFilter]],
+    aec_filter_factory: Callable[[Settings], Optional[BaseAudioFilter]],
 ) -> AudioPath:
     """Return the audio-path tuple appropriate for this platform.
 
@@ -70,14 +72,12 @@ def select_audio_path(
     without pulling in the AEC engine; production callers pass
     `tend.audio.aec.make_aec_filter`.
     """
-    import sys as _sys
-
     explicit = settings.mic_channels
-    if explicit == 2 or (explicit is None and _sys.platform != "darwin"):
+    if explicit == 2 or (explicit is None and sys.platform != "darwin"):
         return AudioPath(
             in_channels=2,
             pre_vad_processors=(StereoToMonoLeft(),),
-            aec_filter=aec_filter_factory(settings) if _sys.platform == "darwin" else None,
+            aec_filter=aec_filter_factory(settings),
         )
     return AudioPath(
         in_channels=1,

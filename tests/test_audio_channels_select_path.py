@@ -5,8 +5,6 @@ from __future__ import annotations
 import sys
 from unittest.mock import MagicMock
 
-import pytest
-
 from tend.audio.channels import AudioPath, StereoToMonoLeft, select_audio_path
 from tend.config import Settings
 
@@ -55,4 +53,18 @@ def test_explicit_mic_channels_2_overrides_macos(monkeypatch):
     assert path.in_channels == 2
     assert len(path.pre_vad_processors) == 1
     assert isinstance(path.pre_vad_processors[0], StereoToMonoLeft)
+    assert path.aec_filter is sentinel
+
+
+def test_explicit_mic_channels_2_on_linux_calls_factory(monkeypatch):
+    """Even on Linux, explicit mic_channels=2 should defer to the factory.
+    The factory itself decides whether to return an AEC filter based on
+    [audio] aec_engine — this test asserts select_audio_path doesn't shortcut
+    the decision."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    sentinel = MagicMock(name="aec_filter")
+    settings = Settings(_env_file=None, mic_channels=2)
+    path = select_audio_path(settings, aec_filter_factory=lambda s: sentinel)
+
+    assert path.in_channels == 2
     assert path.aec_filter is sentinel
