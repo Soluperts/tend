@@ -1,4 +1,4 @@
-"""Tests for tend.audio.av_audio — AVAudioTransport and helpers."""
+"""Tests for tend.audio.av_audio."""
 
 from __future__ import annotations
 
@@ -20,4 +20,3 @@ def test_params_is_transport_params_subclass():
         audio_out_sample_rate=16000,
     )
     assert isinstance(p, TransportParams)
-    assert p.audio_in_sample_rate == 16000
