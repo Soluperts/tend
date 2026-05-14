@@ -145,31 +145,47 @@ class Hub(BaseAgent):
                 f"[hub] AEC filter type: {type(path.aec.filter).__name__}"
             )
 
-        params = LocalAudioTransportParams(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-            audio_in_sample_rate=self._settings.sample_rate,
-            audio_in_channels=path.in_channels,
-            audio_in_filter=path.aec.filter if path.aec else None,
-            audio_out_sample_rate=self._tts_sample_rate,
-        )
+        # Construct the right params subclass for the chosen transport factory.
+        # AVAudioTransport needs AVAudioTransportParams; LocalAudioTransport variants
+        # need LocalAudioTransportParams. They share TransportParams as a base.
+        from tend.audio.av_audio import AVAudioTransport, AVAudioTransportParams
 
-        _logger.info(
-            f"[hub] LocalAudioTransportParams.audio_in_filter is "
-            f"{type(params.audio_in_filter).__name__ if params.audio_in_filter else 'None'}"
-        )
-
-        # When AEC is on, use a transport whose output() taps PCM into the
-        # AEC reference buffer at *PortAudio playback rate* (the blocking
-        # write naturally throttles). A FrameProcessor sitting before
-        # transport.output() would see synthesis-rate bursts (3x realtime
-        # for AVSpeech) — completely misaligned with what the mic actually
-        # hears, so the AEC reference doesn't correlate with the echo.
-        if path.aec is not None:
-            from tend.audio.transport import RefTappedLocalAudioTransport
-            transport = RefTappedLocalAudioTransport(params, reference=path.aec.reference)
+        if path.transport_factory is AVAudioTransport:
+            av_params = AVAudioTransportParams(
+                audio_in_enabled=True,
+                audio_out_enabled=True,
+                audio_in_sample_rate=self._settings.sample_rate,
+                audio_in_channels=path.in_channels,
+                audio_out_sample_rate=self._tts_sample_rate,
+            )
+            _logger.info("[hub] Using AVAudioTransport (VPIO — no filter, no reference tap)")
+            transport = AVAudioTransport(av_params)
         else:
-            transport = LocalAudioTransport(params)
+            params = LocalAudioTransportParams(
+                audio_in_enabled=True,
+                audio_out_enabled=True,
+                audio_in_sample_rate=self._settings.sample_rate,
+                audio_in_channels=path.in_channels,
+                audio_in_filter=path.aec.filter if path.aec else None,
+                audio_out_sample_rate=self._tts_sample_rate,
+            )
+
+            _logger.info(
+                f"[hub] LocalAudioTransportParams.audio_in_filter is "
+                f"{type(params.audio_in_filter).__name__ if params.audio_in_filter else 'None'}"
+            )
+
+            # When AEC is on, use a transport whose output() taps PCM into the
+            # AEC reference buffer at *PortAudio playback rate* (the blocking
+            # write naturally throttles). A FrameProcessor sitting before
+            # transport.output() would see synthesis-rate bursts (3x realtime
+            # for AVSpeech) — completely misaligned with what the mic actually
+            # hears, so the AEC reference doesn't correlate with the echo.
+            if path.aec is not None:
+                from tend.audio.transport import RefTappedLocalAudioTransport
+                transport = RefTappedLocalAudioTransport(params, reference=path.aec.reference)
+            else:
+                transport = path.transport_factory(params)
 
         # Drop TranscriptionUserTurnStartStrategy from the user-turn detector.
         # Default is [VAD, Transcription]; Deepgram transcribes AEC residual
