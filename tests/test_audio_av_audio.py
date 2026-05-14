@@ -272,3 +272,41 @@ async def test_input_transport_tap_callback_pushes_frame_with_gain(monkeypatch):
     assert pushed_frames[0].audio == expected_after_gain
     assert pushed_frames[0].sample_rate == 16000
     assert pushed_frames[0].num_channels == 1
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="AVFoundation requires macOS")
+@pytest.mark.asyncio
+async def test_input_transport_cleanup_removes_tap(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from pipecat.frames.frames import StartFrame
+    from tend.audio.av_audio import AVAudioInputTransport, AVAudioTransportParams
+
+    fake_engine = MagicMock()
+    fake_engine.startAndReturnError_.return_value = (True, None)
+    fake_input = MagicMock()
+    fake_input.setVoiceProcessingEnabled_error_.return_value = (True, None)
+    fake_input.outputFormatForBus_.return_value = MagicMock(
+        sampleRate=lambda: 48000.0, channelCount=lambda: 9,
+    )
+    fake_engine.inputNode.return_value = fake_input
+
+    monkeypatch.setattr(
+        "tend.audio.av_audio._make_input_converter", lambda *a, **kw: MagicMock(),
+    )
+
+    async def fake_set_ready(frame):
+        return None
+    params = AVAudioTransportParams(
+        audio_in_enabled=True, audio_out_enabled=False,
+        audio_in_sample_rate=16000, audio_in_channels=1,
+        audio_out_sample_rate=16000,
+    )
+    inp = AVAudioInputTransport(params, engine=fake_engine)
+    monkeypatch.setattr(inp, "set_transport_ready", fake_set_ready)
+
+    await inp.start(StartFrame(audio_in_sample_rate=16000, audio_out_sample_rate=16000))
+
+    await inp.cleanup()
+
+    fake_input.removeTapOnBus_.assert_called_once_with(0)

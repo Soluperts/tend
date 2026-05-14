@@ -311,3 +311,13 @@ class AVAudioInputTransport(BaseInputTransport):
             raise RuntimeError(f"engine.startAndReturnError_ failed: {err}")
 
         await self.set_transport_ready(frame)
+
+    async def cleanup(self):
+        await super().cleanup()
+        if self._tap_installed and self._input_node is not None:
+            self._input_node.removeTapOnBus_(0)
+            self._tap_installed = False
+        # Engine.stop() is the AVAudioTransport's responsibility (Task 11)
+        # because input + output share one engine.
+        self._input_node = None
+        self._converter = None
