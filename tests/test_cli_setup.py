@@ -21,6 +21,16 @@ def isolated(monkeypatch, tmp_path):
     return tmp_path
 
 
+@pytest.fixture(autouse=True)
+def mock_probe_microphone(monkeypatch):
+    """Prevent real microphone access during tests; return a successful probe."""
+    from tend.checks import CheckResult
+    monkeypatch.setattr(
+        "tend.checks.probe_microphone_access",
+        lambda: CheckResult("microphone", "ok", "test stub"),
+    )
+
+
 @pytest.fixture
 def canned_answers(monkeypatch):
     """Feed canned answers for the questionary prompts in order."""
@@ -54,6 +64,7 @@ def test_setup_creates_workspace_and_writes_secrets(
         "el-test-key",         # ELEVENLABS_API_KEY
         "sk-anthropic-test",   # ANTHROPIC_API_KEY
         [],                    # no optional skills
+        True,                  # macOS: confirm mic permission step
     ])
     from tend.cli import main
     rc = main(["setup", "--no-validate"])
@@ -81,6 +92,7 @@ def test_setup_skips_secret_prompts_when_already_set(
         "",
         "",
         [],
+        True,                  # macOS: confirm mic permission step
     ])
     from tend.cli import main
     rc = main(["setup", "--no-validate"])
@@ -98,6 +110,7 @@ def test_setup_writes_webhook_token_with_url_safe_chars(
         "el-test-key",
         "sk-anthropic-test",
         [],
+        True,                  # macOS: confirm mic permission step
     ])
     from tend.cli import main
     main(["setup", "--no-validate"])
@@ -129,6 +142,7 @@ def test_setup_never_prints_existing_secret_value(
         "el-test-key",
         "",
         [],
+        True,                  # macOS: confirm mic permission step
     ])
     from tend.cli import main
     main(["setup", "--no-validate"])

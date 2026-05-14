@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets as _stdlib_secrets
+import sys
 
 import questionary
 import typer
@@ -32,12 +33,18 @@ def setup_command(
     tts = _ask_tts(noninteractive)
     if tts == "elevenlabs":
         _ask_secret("ELEVENLABS_API_KEY", noninteractive=noninteractive, console=console)
+    _persist_tts_provider(tts)
 
     _ask_secret("ANTHROPIC_API_KEY", noninteractive=noninteractive, console=console)
 
     _ensure_webhook_token(console)
 
     _maybe_install_optional_skills(noninteractive, console)
+
+    if sys.platform == "darwin":
+        _mac_mic_permission_step(console)
+        if tts == "avspeech":
+            _mac_premium_voice_nudge(noninteractive, console)
 
     console.print("\n[bold green]Setup complete.[/bold green]")
     console.print(
@@ -72,6 +79,10 @@ def _ask_stt(noninteractive: bool) -> str:
 
 
 def _ask_tts(noninteractive: bool) -> str:
+    if sys.platform == "darwin":
+        return _ask_tts_macos(noninteractive)
+
+    # Linux (existing behavior)
     if noninteractive:
         return "elevenlabs" if secrets.secret_backend("ELEVENLABS_API_KEY") else "piper"
     pick = questionary.select(
@@ -81,6 +92,50 @@ def _ask_tts(noninteractive: bool) -> str:
     if pick is None:
         raise typer.Exit(code=2)
     return "elevenlabs" if pick.startswith("ElevenLabs") else "piper"
+
+
+def _ask_tts_macos(noninteractive: bool) -> str:
+    if noninteractive:
+        return "elevenlabs" if secrets.secret_backend("ELEVENLABS_API_KEY") else "avspeech"
+    pick = questionary.select(
+        "How should tend speak?",
+        choices=[
+            "Apple's built-in voice (free, fast, runs offline)",
+            "ElevenLabs (cloud, best quality, paid)",
+        ],
+    ).ask()
+    if pick is None:
+        raise typer.Exit(code=2)
+    return "avspeech" if pick.startswith("Apple") else "elevenlabs"
+
+
+def _persist_tts_provider(provider: str, avspeech_voice: str = "") -> None:
+    """Write the chosen TTS provider to ~/.tend/tend.toml."""
+    from tend import paths
+    import tomllib
+
+    toml_path = paths.tend_home() / "tend.toml"
+    if toml_path.exists():
+        data = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+    else:
+        data = {}
+    tts = data.setdefault("tts", {})
+    tts["provider"] = provider
+    if avspeech_voice:
+        tts["avspeech_voice"] = avspeech_voice
+
+    lines = []
+    for section, body in data.items():
+        lines.append(f"[{section}]")
+        for k, val in body.items():
+            if isinstance(val, str):
+                lines.append(f'{k} = "{val}"')
+            elif isinstance(val, bool):
+                lines.append(f"{k} = {'true' if val else 'false'}")
+            else:
+                lines.append(f"{k} = {val}")
+        lines.append("")
+    toml_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def _ask_secret(key: str, *, noninteractive: bool, console: Console) -> None:
@@ -151,3 +206,63 @@ def _maybe_install_optional_skills(noninteractive: bool, console: Console) -> No
     if picked:
         skill_update.install_optional_skills(picked)
         console.print(f"  Installed: {', '.join(picked)}")
+
+
+def _mac_mic_permission_step(console: Console) -> None:
+    """Trigger the TCC microphone permission prompt and verify."""
+    from tend.checks import probe_microphone_access
+
+    console.print(
+        "\n[bold]Microphone access (macOS)[/bold]\n"
+        "  macOS will ask to grant tend access to your microphone.\n"
+        "  When the prompt appears, click [bold]Allow[/bold]."
+    )
+    if not questionary.confirm("Continue?", default=True).ask():
+        raise typer.Exit(code=2)
+
+    result = probe_microphone_access()
+    if result.status == "ok":
+        console.print("  [green]✓[/green] Microphone access granted.")
+    elif result.status == "warn":
+        console.print(
+            "  [yellow]⚠[/yellow] Captured silence — confirm the OS prompt "
+            "was approved and the mic is unmuted. Run `tend doctor` later to retry."
+        )
+    else:
+        console.print(f"  [red]✗[/red] {result.detail}")
+        if result.remediation:
+            console.print(f"  remediation: {result.remediation}")
+
+
+def _mac_premium_voice_nudge(noninteractive: bool, console: Console) -> None:
+    """Offer to open VoiceOver Utility for Premium voice install."""
+    import subprocess
+
+    console.print(
+        "\n[bold]Premium voice (optional, free)[/bold]\n"
+        "  Apple's default voice is okay. For a markedly better Premium\n"
+        "  voice (~300–600 MB), download one via VoiceOver Utility:\n"
+        "    1.  Open VoiceOver Utility (⌃ ⌥ Fn F8)\n"
+        "    2.  Speech → Voices → +\n"
+        "    3.  Pick a language → pick a voice marked Premium or Enhanced\n"
+        "    4.  Click Download → wait for it to finish\n"
+        "    5.  Close VoiceOver Utility\n\n"
+        "  Note: Siri-quality voices are not accessible to tend; Premium\n"
+        "  voices are the highest tier the AVSpeechSynthesizer API exposes."
+    )
+    if noninteractive or not questionary.confirm(
+        "Open VoiceOver Utility now?", default=False,
+    ).ask():
+        console.print(
+            "  Skipped. Later: `open -a 'VoiceOver Utility'`, "
+            "then `tend voices set <identifier>`."
+        )
+        return
+
+    subprocess.run(["open", "-a", "VoiceOver Utility"], check=False)
+    console.print(
+        "  Opened. After your download finishes, run:\n"
+        "    tend voices list\n"
+        "    tend voices set <identifier>\n"
+        "    tend voices test"
+    )

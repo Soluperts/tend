@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from unittest.mock import MagicMock
 
 import pytest
@@ -31,6 +32,16 @@ def isolated(monkeypatch, tmp_path):
     monkeypatch.setattr("shutil.which", lambda c: "/bin/x")
 
     monkeypatch.setattr("subprocess.run", lambda *a, **kw: MagicMock(returncode=0))
+
+    from tend.checks import CheckResult
+    monkeypatch.setattr(
+        "tend.checks.probe_microphone_access",
+        lambda: CheckResult("microphone", "ok", "test stub"),
+    )
+    monkeypatch.setattr(
+        "tend.checks.check_aec_engine",
+        lambda s: CheckResult("aec_engine", "ok", "AEC: stub (test)"),
+    )
     return tmp_path
 
 
@@ -43,6 +54,7 @@ def test_setup_then_doctor_then_service_install(isolated, monkeypatch):
         "el-key",
         "sk-anth",
         [],
+        True,   # macOS: confirm mic permission step
     ])
 
     def factory(*a, **kw):
@@ -59,4 +71,7 @@ def test_setup_then_doctor_then_service_install(isolated, monkeypatch):
     assert main(["doctor"]) == 0
     assert main(["service", "install"]) == 0
 
-    assert (isolated / ".config" / "systemd" / "user" / "tend.service").exists()
+    if sys.platform == "darwin":
+        assert (isolated / "Library" / "LaunchAgents" / "com.tend.daemon.plist").exists()
+    else:
+        assert (isolated / ".config" / "systemd" / "user" / "tend.service").exists()
