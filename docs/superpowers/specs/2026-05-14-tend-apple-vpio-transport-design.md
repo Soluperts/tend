@@ -8,7 +8,7 @@ There is no software-AEC ceiling above ~25 dB realistically achievable on consum
 
 ## Goal
 
-Replace pipecat's `LocalAudioTransport` on macOS with `AppleAudioTransport` — an `AVAudioEngine`-based transport that runs Apple's VoiceProcessingIO audio unit (AEC + NS + AGC, the same path FaceTime / Voice Memos use). When VPIO is the active engine, no software AEC filter runs at all; the OS handles it upstream of pipecat seeing any audio.
+Replace pipecat's `LocalAudioTransport` on macOS with `AVAudioTransport` — an `AVAudioEngine`-based transport that runs Apple's VoiceProcessingIO audio unit (AEC + NS + AGC, the same path FaceTime / Voice Memos use). When VPIO is the active engine, no software AEC filter runs at all; the OS handles it upstream of pipecat seeing any audio.
 
 Naming follows pipecat's convention (platform identifier + `AudioTransport`, mirroring `LocalAudioTransport` in `pipecat/transports/local/audio.py`). Voice processing is the default-on feature, not the transport's identity.
 
@@ -26,22 +26,22 @@ The speex path remains in the codebase as an explicit opt-out (`aec_engine="spee
 
 ## Architecture
 
-Single new module that mirrors pipecat's `local/audio.py` file shape, so it's pasteable upstream as `pipecat.transports.local.apple_audio` when we file the PR later.
+Single new module that mirrors pipecat's `local/audio.py` file shape, so it's pasteable upstream as `pipecat.transports.local.av_audio` when we file the PR later.
 
 ```
-src/tend/audio/apple_audio.py
-  AppleAudioTransportParams(TransportParams)
+src/tend/audio/av_audio.py
+  AVAudioTransportParams(TransportParams)
     - no extra fields for v1
     - reserved for input_device_uid / output_device_uid additions later
-  AppleAudioTransport(BaseTransport)
+  AVAudioTransport(BaseTransport)
     - owns one AVAudioEngine
-    - input() lazy-returns AppleAudioInputTransport
-    - output() lazy-returns AppleAudioOutputTransport
-  AppleAudioInputTransport(BaseInputTransport)
+    - input() lazy-returns AVAudioInputTransport
+    - output() lazy-returns AVAudioOutputTransport
+  AVAudioInputTransport(BaseInputTransport)
     - installs tap on engine.inputNode at the bus's native format
     - per-buffer AVAudioConverter → target sample_rate/int16/mono
     - tap callback marshals to asyncio via run_coroutine_threadsafe
-  AppleAudioOutputTransport(BaseOutputTransport)
+  AVAudioOutputTransport(BaseOutputTransport)
     - owns one AVAudioPlayerNode attached to engine.mainMixerNode
     - write_audio_frame: schedule a single AVAudioPCMBuffer with
       completionCallbackType=.dataPlayedBack; await its completion
@@ -108,7 +108,7 @@ Buffer size is one TTS-produced frame at a time (~20 ms typical), so the in-flig
 
 ## Wiring into the existing tend pipeline
 
-`AudioPath` gains a `transport_factory` field. `select_audio_path` picks `AppleAudioTransport` on macOS when `aec_engine` resolves to `"vpio"`.
+`AudioPath` gains a `transport_factory` field. `select_audio_path` picks `AVAudioTransport` on macOS when `aec_engine` resolves to `"vpio"`.
 
 ```python
 @dataclass(frozen=True)
@@ -126,11 +126,11 @@ AudioPath(
     in_channels=1,
     pre_vad_processors=(),
     aec=None,                       # VPIO does AEC upstream of pipecat
-    transport_factory=AppleAudioTransport,
+    transport_factory=AVAudioTransport,
 )
 ```
 
-The factory signature uses `TransportParams` (pipecat's base class) rather than `LocalAudioTransportParams` because the two transports take different params subclasses. `Hub.build_pipeline` chooses which params subclass to instantiate based on which transport the factory expects — concretely, the macOS branch constructs `AppleAudioTransportParams`, the rest construct `LocalAudioTransportParams`. The existing `RefTappedLocalAudioTransport` (for speex) stays — it's used when the user explicitly picks `aec_engine="speex"`.
+The factory signature uses `TransportParams` (pipecat's base class) rather than `LocalAudioTransportParams` because the two transports take different params subclasses. `Hub.build_pipeline` chooses which params subclass to instantiate based on which transport the factory expects — concretely, the macOS branch constructs `AVAudioTransportParams`, the rest construct `LocalAudioTransportParams`. The existing `RefTappedLocalAudioTransport` (for speex) stays — it's used when the user explicitly picks `aec_engine="speex"`.
 
 ### `aec_engine` setting
 
@@ -139,7 +139,7 @@ Adds one value:
 | Value | Behaviour |
 |-------|-----------|
 | `auto` | macOS → `vpio`. Linux → `off` (unchanged). |
-| `vpio` | macOS only. Use `AppleAudioTransport`. No filter. |
+| `vpio` | macOS only. Use `AVAudioTransport`. No filter. |
 | `speex` | Use plain `LocalAudioTransport` + `SpeexAECFilter` + `RefTappedLocalAudioTransport`. (Unchanged.) |
 | `webrtc-aec3` | Reserved. Raises `NotImplementedError` as today. |
 | `off` | No AEC, plain `LocalAudioTransport`. (Unchanged.) |
@@ -190,7 +190,7 @@ If the PoC fails on user's macOS 26 / hardware, we discover it in ~50 lines of c
 
 ## Testing
 
-- **Unit tests:** `tests/test_audio_apple_audio.py`. Mock `AVAudioEngine` / `AVAudioPlayerNode` / `AVAudioConverter`. Verify:
+- **Unit tests:** `tests/test_audio_av_audio.py`. Mock `AVAudioEngine` / `AVAudioPlayerNode` / `AVAudioConverter`. Verify:
   - The asyncio bridge: a fake tap callback (called from a thread) results in `push_audio_frame` being awaited with the right frame.
   - Backpressure: `write_audio_frame` blocks until the completion handler is invoked.
   - Lifecycle: start ↔ stop is idempotent and ordered correctly.
@@ -209,13 +209,13 @@ If the PoC fails on user's macOS 26 / hardware, we discover it in ~50 lines of c
 
 | File | Change |
 |------|--------|
-| `src/tend/audio/apple_audio.py` | NEW. AppleAudioTransport + helpers. ~250 LOC. |
+| `src/tend/audio/av_audio.py` | NEW. AVAudioTransport + helpers. ~250 LOC. |
 | `src/tend/audio/channels.py` | Add `transport_factory` to `AudioPath`. macOS VPIO branch in `select_audio_path`. |
 | `src/tend/audio/aec.py` | Add `"vpio"` to `resolve_aec_engine`. Update auto-resolution on macOS. |
 | `src/tend/audio/hub.py` | Use `path.transport_factory(params)` to construct transport. |
 | `src/tend/config.py` | Document `vpio` as a valid `aec_engine` value in the field's comment. |
 | `scripts/audio_check_vpio.py` | NEW. Standalone PoC + suppression measurement. |
-| `tests/test_audio_apple_audio.py` | NEW. Unit tests with mocked AVFoundation. |
+| `tests/test_audio_av_audio.py` | NEW. Unit tests with mocked AVFoundation. |
 | `tests/test_audio_channels_select_path.py` | Add macOS-VPIO branch coverage. |
 | `README.md` | Note VPIO is the macOS default. |
 | `ROADMAP.md` | Move the VPIO line from "After public release" into the changelog row when this lands. |
