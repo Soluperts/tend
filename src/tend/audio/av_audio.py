@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from pipecat.frames.frames import InputAudioRawFrame, StartFrame
 from pipecat.transports.base_input import BaseInputTransport
+from pipecat.transports.base_output import BaseOutputTransport
 from pipecat.transports.base_transport import TransportParams
 
 if TYPE_CHECKING:
@@ -321,3 +322,80 @@ class AVAudioInputTransport(BaseInputTransport):
         # because input + output share one engine.
         self._input_node = None
         self._converter = None
+
+
+def _make_player_node() -> "AVAudioPlayerNode":
+    """Factory so tests can inject a fake player without monkey-patching AVFoundation."""
+    from AVFoundation import AVAudioPlayerNode
+    return AVAudioPlayerNode.alloc().init()
+
+
+class AVAudioOutputTransport(BaseOutputTransport):
+    """Plays audio via AVAudioPlayerNode → outputNode (direct, no mixer).
+
+    Under VPIO, the mainMixerNode's default 44.1 kHz format conflicts
+    with the outputNode's 48 kHz, and engine.start() fails with
+    err=-10875. So the player connects directly to outputNode at
+    outputNode.inputFormat(forBus: 0) (typically 2ch Float32 48 kHz
+    deinterleaved on built-in MacBook speakers).
+
+    write_audio_frame (Task 9) converts incoming int16 mono PCM to the
+    output node's format via _convert_int16_buffer_to_float32_buffer,
+    then schedules with .dataPlayedBack completion type for realtime-
+    paced backpressure.
+    """
+
+    _params: AVAudioTransportParams
+
+    def __init__(
+        self,
+        params: AVAudioTransportParams,
+        *,
+        engine: "AVAudioEngine",
+    ):
+        super().__init__(params)
+        self._engine = engine
+        self._player: "AVAudioPlayerNode | None" = None
+        self._output_format: "AVAudioFormat | None" = None
+        self._converter: "AVAudioConverter | None" = None
+        self._sample_rate = 0
+        self._started = False
+
+    async def start(self, frame: StartFrame):
+        await super().start(frame)
+        if self._started:
+            return
+
+        self._sample_rate = (
+            self._params.audio_out_sample_rate or frame.audio_out_sample_rate
+        )
+        output_node = self._engine.outputNode()
+        # The output node's input format is what the speaker hardware
+        # demands under VPIO — typically 2ch 48 kHz Float32 deinterleaved.
+        self._output_format = output_node.inputFormatForBus_(0)
+        logger.info(
+            f"[av_audio] output node format: "
+            f"sr={self._output_format.sampleRate()} "
+            f"ch={self._output_format.channelCount()}"
+        )
+
+        self._player = _make_player_node()
+        self._engine.attachNode_(self._player)
+        # DIRECT connect to outputNode, skipping mainMixerNode (its 44.1 kHz
+        # default conflicts with VPIO's 48 kHz output).
+        self._engine.connect_to_format_(
+            self._player, output_node, self._output_format,
+        )
+
+        self._converter = _make_output_converter(
+            source_sample_rate=self._sample_rate,
+            target_format=self._output_format,
+        )
+
+        # Idempotent — input transport may already have started the engine.
+        started, err = self._engine.startAndReturnError_(None)
+        if not started:
+            raise RuntimeError(f"engine.startAndReturnError_ failed: {err}")
+        self._player.play()
+        self._started = True
+        await self.set_transport_ready(frame)

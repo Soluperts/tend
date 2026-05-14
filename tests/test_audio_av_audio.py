@@ -310,3 +310,54 @@ async def test_input_transport_cleanup_removes_tap(monkeypatch):
     await inp.cleanup()
 
     fake_input.removeTapOnBus_.assert_called_once_with(0)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="AVFoundation requires macOS")
+@pytest.mark.asyncio
+async def test_output_transport_start_attaches_player_to_output_node(monkeypatch):
+    """Player must connect to OUTPUT NODE directly, NOT mainMixerNode.
+    Under VPIO, mainMixer's 44.1 kHz default conflicts with outputNode's
+    48 kHz and engine.start() fails with err=-10875."""
+    from unittest.mock import MagicMock
+
+    from pipecat.frames.frames import StartFrame
+    from tend.audio.av_audio import AVAudioOutputTransport, AVAudioTransportParams
+
+    fake_engine = MagicMock()
+    fake_engine.startAndReturnError_.return_value = (True, None)
+    fake_player = MagicMock(name="player")
+    fake_output_node = MagicMock(name="output_node")
+    fake_output_format = MagicMock(
+        name="output_format", channelCount=lambda: 2, sampleRate=lambda: 48000.0,
+    )
+    fake_output_node.inputFormatForBus_.return_value = fake_output_format
+    fake_engine.outputNode.return_value = fake_output_node
+
+    monkeypatch.setattr(
+        "tend.audio.av_audio._make_player_node", lambda: fake_player,
+    )
+    monkeypatch.setattr(
+        "tend.audio.av_audio._make_output_converter",
+        lambda *a, **kw: MagicMock(),
+    )
+
+    async def fake_set_ready(frame):
+        return None
+    params = AVAudioTransportParams(
+        audio_in_enabled=False, audio_out_enabled=True,
+        audio_in_sample_rate=16000, audio_in_channels=1,
+        audio_out_sample_rate=16000,
+    )
+    out = AVAudioOutputTransport(params, engine=fake_engine)
+    monkeypatch.setattr(out, "set_transport_ready", fake_set_ready)
+
+    await out.start(StartFrame(audio_in_sample_rate=16000, audio_out_sample_rate=16000))
+
+    fake_engine.attachNode_.assert_called_once_with(fake_player)
+    # KEY: connect target is outputNode, not mainMixerNode.
+    connect_call = fake_engine.connect_to_format_.call_args
+    assert connect_call[0][0] is fake_player
+    assert connect_call[0][1] is fake_output_node
+    # The mainMixerNode must NOT be referenced at all in the connect chain.
+    assert not fake_engine.mainMixerNode.called
+    fake_player.play.assert_called_once()
