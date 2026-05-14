@@ -19,7 +19,6 @@ from pathlib import Path
 from xml.sax.saxutils import escape as _xml_escape
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -201,20 +200,7 @@ class Hub(BaseAgent):
         return Pipeline([
             transport.input(),
             *path.pre_vad_processors,
-            VADProcessor(vad_analyzer=SileroVADAnalyzer(
-                # Tuned against the speex-AEC residual floor on built-in
-                # MacBook hardware. Measured RMS levels in the live log:
-                #   AEC residual (bot solo):  out_rms 5-500   (0.02-1.5%)
-                #   Real user speech:         mic_rms 3000-9000+ (9-30%)
-                # Defaults (0.7/0.6) trip on residual. 0.85/0.85 missed
-                # real speech. min_volume=0.75 sits in the middle.
-                params=VADParams(
-                    confidence=0.7,
-                    start_secs=0.25,
-                    stop_secs=0.4,
-                    min_volume=0.75,
-                ),
-            )),
+            VADProcessor(vad_analyzer=SileroVADAnalyzer()),
             OpenWakeWordGate(
                 model_name=self._settings.openwakeword_model,
                 threshold=self._settings.wake_threshold,
