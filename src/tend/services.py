@@ -267,8 +267,16 @@ class AVSpeechSynthesizerTTSService(TTSService):
         # separate language setting — language is part of the voice id.
         from pipecat.services.settings import TTSSettings
 
+        # push_start_frame / push_stop_frames let the base TTSService open an
+        # audio context, emit TTSStartedFrame, and close it with TTSStoppedFrame
+        # around each synthesis. Without these the audio frames yielded from
+        # _stream_audio_frames_from_iterator have no context registered with
+        # transport.output, so they're effectively dropped — synthesis "works"
+        # but the speaker hears nothing. Piper does the same.
         super().__init__(
             sample_rate=sample_rate,
+            push_start_frame=True,
+            push_stop_frames=True,
             settings=TTSSettings(
                 model=None,
                 voice=voice_identifier or None,
@@ -283,89 +291,121 @@ class AVSpeechSynthesizerTTSService(TTSService):
         return True
 
     async def _synthesize_to_pcm(self, text: str):
-        """Synthesize via `speakUtterance_`, route audio through the system speaker.
+        """Async generator: yields raw int16 mono PCM bytes at self._sample_rate.
 
-        For v1, we use AVSpeechSynthesizer's direct-to-speaker path
-        (`speakUtterance_`) rather than its buffer-callback path
-        (`writeUtterance_toBufferCallback_`). The buffer-callback API is
-        async on a private dispatch queue that needs the main NSRunLoop
-        pumped to fire — incompatible with an asyncio event loop, so
-        the callback never runs and the pipeline hangs.
+        On macOS, drives AVSpeechSynthesizer via PyObjC. Resampling to
+        self._sample_rate is done from the buffer's native format.
 
-        We work around this by running the synthesizer inside a worker
-        thread that pumps its own runloop. The audio plays directly
-        through the system speaker; we yield zero bytes to the
-        pipecat pipeline so its TTSStarted/TTSStopped framing fires
-        correctly around the (zero-frame) audio block. The downside:
-        `OutputAudioCapture` sees no PCM, so AEC has no reference
-        signal. That's an accepted v1 limitation — Task 15 (WebRTC
-        AEC3) is gated and can revisit the PCM extraction story when
-        AEC matters.
+        IMPORTANT (implementer note): the PCM extraction below from
+        AVAudioPCMBuffer.floatChannelData() via PyObjC is the fiddliest
+        bit. The structure varies slightly across PyObjC versions. If
+        the buffer pointer doesn't support indexing as written, consult
+        `python -c "import AVFoundation; help(AVFoundation.AVAudioPCMBuffer)"`
+        for the canonical access path on this PyObjC version. The unit
+        test mocks this method out, so the test passes regardless of
+        native plumbing — but a manual smoke test on a real Mac is
+        required to confirm the implementation works in practice.
         """
-        import asyncio
-        import threading
-
-        import objc
         import AVFoundation
-        from Foundation import NSDate, NSObject, NSRunLoop
+        import asyncio
+        import array
+        import audioop
 
         loop = asyncio.get_running_loop()
-        done_event = asyncio.Event()
+        queue: asyncio.Queue = asyncio.Queue()
+        SENTINEL = object()
 
-        class _SpeechDelegate(NSObject):
-            def init(self):
-                self = objc.super(_SpeechDelegate, self).init()
-                if self is None:
-                    return None
-                return self
+        synth = AVFoundation.AVSpeechSynthesizer.new()
+        utt = AVFoundation.AVSpeechUtterance.speechUtteranceWithString_(text)
+        if self._voice_identifier:
+            voice = AVFoundation.AVSpeechSynthesisVoice.voiceWithIdentifier_(
+                self._voice_identifier,
+            )
+            if voice is not None:
+                utt.setVoice_(voice)
 
-            def speechSynthesizer_didFinishSpeechUtterance_(self, _synth, _utt):
-                loop.call_soon_threadsafe(done_event.set)
+        call_count = {"n": 0, "bytes": 0}
 
-            def speechSynthesizer_didCancelSpeechUtterance_(self, _synth, _utt):
-                loop.call_soon_threadsafe(done_event.set)
-
-        def _worker():
+        def callback(buffer):
+            call_count["n"] += 1
             try:
-                synth = AVFoundation.AVSpeechSynthesizer.new()
-                delegate = _SpeechDelegate.alloc().init()
-                synth.setDelegate_(delegate)
+                if buffer is None:
+                    logger.debug(f"[avspeech] callback fired with buffer=None (call #{call_count['n']}); sending sentinel")
+                    loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
+                    return
 
-                utt = AVFoundation.AVSpeechUtterance.speechUtteranceWithString_(text)
-                if self._voice_identifier:
-                    voice = AVFoundation.AVSpeechSynthesisVoice.voiceWithIdentifier_(
-                        self._voice_identifier,
+                fmt = buffer.format()
+                channels = fmt.channelCount()
+                native_sr = int(fmt.sampleRate())
+                n_frames = buffer.frameLength()
+
+                logger.debug(
+                    f"[avspeech] callback #{call_count['n']}: "
+                    f"buffer={type(buffer).__name__} channels={channels} "
+                    f"native_sr={native_sr} n_frames={n_frames}"
+                )
+
+                if n_frames == 0:
+                    logger.debug(f"[avspeech] zero-length buffer treated as EOF; sending sentinel")
+                    loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
+                    return
+
+                # Try int16ChannelData first (less common but cheaper).
+                i16 = buffer.int16ChannelData()
+                if i16 is not None:
+                    logger.debug(f"[avspeech] using int16ChannelData path; i16[0] type={type(i16[0]).__name__}")
+                    i16_bytes = _ptr_to_bytes(i16[0], n_frames * 2)
+                else:
+                    # Fall back to floatChannelData → convert.
+                    fc = buffer.floatChannelData()
+                    logger.debug(f"[avspeech] using floatChannelData path; fc type={type(fc).__name__}")
+                    if fc is None:
+                        logger.warning("[avspeech] floatChannelData() returned None; yielding empty")
+                        loop.call_soon_threadsafe(queue.put_nowait, b"")
+                        return
+                    floats = array.array("f")
+                    raw = _ptr_to_bytes(fc[0], n_frames * 4)
+                    logger.debug(f"[avspeech] raw float bytes len={len(raw)}; first 16: {raw[:16].hex()}")
+                    floats.frombytes(raw)
+                    i16_bytes = array.array(
+                        "h",
+                        [max(-32768, min(32767, int(x * 32767))) for x in floats],
+                    ).tobytes()
+
+                # Resample if needed
+                if native_sr != self._sample_rate:
+                    logger.debug(f"[avspeech] resampling {native_sr} -> {self._sample_rate}")
+                    i16_bytes, _ = audioop.ratecv(
+                        i16_bytes, 2, channels, native_sr, self._sample_rate, None,
                     )
-                    if voice is not None:
-                        utt.setVoice_(voice)
 
-                synth.speakUtterance_(utt)
-
-                # Pump this thread's runloop until the delegate fires. 60 s cap
-                # protects against a stuck synth (worst case: the user just
-                # never hears the rest of one utterance).
-                rl = NSRunLoop.currentRunLoop()
-                elapsed = 0.0
-                while not done_event.is_set() and elapsed < 60.0:
-                    rl.runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.1))
-                    elapsed += 0.1
+                call_count["bytes"] += len(i16_bytes)
+                logger.debug(
+                    f"[avspeech] emitting {len(i16_bytes)} int16 bytes "
+                    f"(running total {call_count['bytes']}); "
+                    f"first 16 bytes: {i16_bytes[:16].hex()}"
+                )
+                loop.call_soon_threadsafe(queue.put_nowait, i16_bytes)
             except Exception as e:
-                logger.exception(f"[avspeech] worker error: {e!r}")
-                loop.call_soon_threadsafe(done_event.set)
+                logger.exception(f"[avspeech] callback error: {e!r}")
+                loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
 
-        logger.debug(
-            f"[avspeech] speakUtterance for {len(text)}-char text "
-            f"with voice={self._voice_identifier or '(default)'}"
+        logger.debug(f"[avspeech] starting writeUtterance for {len(text)}-char text with voice={self._voice_identifier or '(default)'}")
+        synth.writeUtterance_toBufferCallback_(utt, callback)
+
+        chunks_yielded = 0
+        while True:
+            chunk = await queue.get()
+            if chunk is SENTINEL:
+                break
+            if chunk:
+                chunks_yielded += 1
+                yield chunk
+
+        logger.info(
+            f"[avspeech] run complete: {call_count['n']} callbacks, "
+            f"{call_count['bytes']} total bytes, {chunks_yielded} chunks yielded"
         )
-        t = threading.Thread(target=_worker, daemon=True, name="avspeech-worker")
-        t.start()
-
-        await done_event.wait()
-        logger.debug("[avspeech] utterance complete")
-        # We yielded no actual PCM — the system speaker played it.
-        # Return without yielding (this is still a valid empty generator).
-        return
-        yield  # noqa: unreachable — keeps this function a generator
 
     async def run_tts(self, text: str, context_id: str):
         """Pipecat 1.1 entry point.
