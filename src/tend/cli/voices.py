@@ -88,27 +88,37 @@ def voices_set(
 def voices_test(
     identifier: str = typer.Argument("", help="Identifier (default: configured)."),
 ) -> None:
-    """Speak a short sample with the given (or configured) voice."""
+    """Speak a short sample with the given (or configured) voice.
+
+    This drives AVSpeechSynthesizer's system-speaker path directly so
+    you can hear the voice immediately. It does not exercise the
+    pipecat pipeline — for that, run `tend` and wake it normally.
+    """
     _require_macos()
-    import asyncio
+    import time
+
+    import AVFoundation
+
     from tend.config import Settings
-    from tend.services import AVSpeechSynthesizerTTSService
 
     settings = Settings()
     voice_id = identifier or settings.avspeech_voice
 
-    async def main():
-        svc = AVSpeechSynthesizerTTSService(
-            voice_identifier=voice_id, sample_rate=settings.sample_rate,
-        )
-        async for frame in svc.run_tts(
-            "tend is now using this voice. It sounds like this."
-        ):
-            pass
+    synth = AVFoundation.AVSpeechSynthesizer.new()
+    utt = AVFoundation.AVSpeechUtterance.speechUtteranceWithString_(
+        "tend is now using this voice. It sounds like this."
+    )
+    if voice_id:
+        voice = AVFoundation.AVSpeechSynthesisVoice.voiceWithIdentifier_(voice_id)
+        if voice is not None:
+            utt.setVoice_(voice)
 
     Console().print(
         f"Speaking sample with voice "
         f"[bold]{voice_id or '(system default)'}[/bold]..."
     )
-    asyncio.run(main())
+    synth.speakUtterance_(utt)
+    # speakUtterance_ is async on a private runloop; poll until it finishes.
+    while synth.isSpeaking():
+        time.sleep(0.1)
     Console().print("[green]✓[/green] Done.")
