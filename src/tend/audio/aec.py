@@ -15,15 +15,13 @@ most-recently-played bytes for the requested length.
 from __future__ import annotations
 
 import array
-import logging
 import sys
 import threading
 from ctypes import c_int16
 
+from loguru import logger
 from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
 from pipecat.frames.frames import FilterControlFrame, FilterEnableFrame
-
-logger = logging.getLogger(__name__)
 
 
 class ReferenceBuffer:
