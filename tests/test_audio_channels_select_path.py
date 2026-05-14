@@ -29,15 +29,23 @@ def test_linux_default_returns_xvf3800_path(monkeypatch):
     assert path.aec is None
 
 
-def test_macos_default_returns_mono_path_no_xvf(monkeypatch):
+def test_macos_default_returns_vpio_path(monkeypatch):
+    """macOS default (aec_engine='auto') resolves to vpio; the VPIO
+    short-circuit returns a mono path with no AEC pair and the
+    AVAudioTransport factory."""
+    from tend.audio.av_audio import AVAudioTransport
+
     monkeypatch.setattr(sys, "platform", "darwin")
-    sentinel_pair = _make_sentinel_pair()
     settings = Settings(_env_file=None)
-    path = select_audio_path(settings, aec_filter_factory=lambda s: sentinel_pair)
+    # AEC factory should never be invoked under VPIO.
+    def boom(_):
+        raise AssertionError("AEC factory should not run for vpio engine")
+    path = select_audio_path(settings, aec_filter_factory=boom)
 
     assert path.in_channels == 1
     assert path.pre_vad_processors == ()
-    assert path.aec is sentinel_pair
+    assert path.aec is None
+    assert path.transport_factory is AVAudioTransport
 
 
 def test_explicit_mic_channels_1_overrides_linux(monkeypatch):
@@ -50,9 +58,13 @@ def test_explicit_mic_channels_1_overrides_linux(monkeypatch):
 
 
 def test_explicit_mic_channels_2_overrides_macos(monkeypatch):
+    """mic_channels=2 on macOS opens the 2-channel branch with the
+    XVF3800-style StereoToMonoLeft processor. Requires aec_engine to
+    not be 'vpio' (the VPIO branch is mono-only and ignores
+    mic_channels)."""
     monkeypatch.setattr(sys, "platform", "darwin")
     sentinel_pair = _make_sentinel_pair()
-    settings = Settings(_env_file=None, mic_channels=2)
+    settings = Settings(_env_file=None, mic_channels=2, aec_engine="speex")
     path = select_audio_path(settings, aec_filter_factory=lambda s: sentinel_pair)
 
     assert path.in_channels == 2
