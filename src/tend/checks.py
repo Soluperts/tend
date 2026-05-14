@@ -7,6 +7,7 @@ side-effects: doctor only reads, setup may prompt the user to fix a fail.
 from __future__ import annotations
 
 import shutil
+import sys as _sys
 from dataclasses import dataclass
 from typing import Literal
 
@@ -194,20 +195,157 @@ def check_gws_cli() -> CheckResult:
     )
 
 
+def probe_microphone_access() -> CheckResult:
+    """Open a brief PyAudio input stream to probe TCC microphone access.
+
+    On macOS, opening the stream triggers the system permission prompt
+    (the first time only). Returns:
+      ok    — stream opened and captured non-zero samples
+      warn  — stream opened but captured silence (could be a quiet env, or
+              the user dismissed the prompt)
+      fail  — stream open raised, typically because TCC denied access
+    """
+    try:
+        import pyaudio
+    except ImportError:
+        return CheckResult(
+            "microphone", "fail",
+            "pyaudio is not installed",
+            remediation="pip install pyaudio (and brew install portaudio on macOS)",
+        )
+
+    pa = pyaudio.PyAudio()
+    try:
+        try:
+            stream = pa.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=16000,
+                input=True,
+                frames_per_buffer=800,
+            )
+        except OSError as e:
+            python_path = _sys.executable
+            return CheckResult(
+                "microphone", "fail",
+                f"could not open microphone: {e}",
+                remediation=(
+                    f"grant Microphone access for {python_path} in "
+                    f"System Settings → Privacy & Security → Microphone"
+                ),
+            )
+
+        try:
+            data = stream.read(800, exception_on_overflow=False)
+        except OSError as e:
+            return CheckResult(
+                "microphone", "fail",
+                f"could not read from microphone: {e}",
+                remediation="grant Microphone permission in System Settings",
+            )
+        finally:
+            stream.stop_stream()
+            stream.close()
+
+        # Detect silence vs. signal.
+        max_amp = 0
+        for i in range(0, len(data), 2):
+            sample = int.from_bytes(data[i:i+2], "little", signed=True)
+            if abs(sample) > max_amp:
+                max_amp = abs(sample)
+
+        if max_amp > 1:
+            return CheckResult(
+                "microphone", "ok",
+                f"captured signal (peak amplitude {max_amp})",
+            )
+        return CheckResult(
+            "microphone", "warn",
+            "captured silence — confirm the prompt was approved and the mic is unmuted",
+        )
+    finally:
+        pa.terminate()
+
+
+def check_aec_engine(settings) -> CheckResult:
+    """Report the resolved AEC engine and whether its dependency is importable."""
+    from tend.audio.aec import _webrtc_importable, resolve_aec_engine
+
+    configured = settings.aec_engine or "auto"
+    resolved = resolve_aec_engine(settings)
+
+    if resolved == "off":
+        return CheckResult("aec_engine", "ok", "AEC disabled (off)")
+
+    if resolved == "speex":
+        if configured == "auto" and _sys.platform == "darwin" and not _webrtc_importable():
+            return CheckResult(
+                "aec_engine", "warn",
+                "AEC: speex (fallback; webrtc-audio-processing not installed)",
+                remediation=(
+                    "for state-of-the-art AEC: brew install webrtc-audio-processing "
+                    "&& pipx inject tend aec-webrtc"
+                ),
+            )
+        return CheckResult("aec_engine", "ok", "AEC: speex")
+
+    if resolved == "webrtc-aec3":
+        if not _webrtc_importable():
+            return CheckResult(
+                "aec_engine", "fail",
+                "AEC: webrtc-aec3 configured but webrtc-audio-processing not importable",
+                remediation=(
+                    "brew install webrtc-audio-processing "
+                    "&& pipx inject tend webrtc-audio-processing"
+                ),
+            )
+        return CheckResult("aec_engine", "ok", "AEC: webrtc-aec3")
+
+    return CheckResult(
+        "aec_engine", "warn", f"unknown aec_engine={configured!r}",
+    )
+
+
+def check_tts_provider(settings) -> CheckResult:
+    """Report the resolved TTS provider and whether it can be instantiated.
+
+    Does not actually call the network or hardware — just dispatches the
+    same resolution logic as services._make_tts and reports the outcome.
+    """
+    from tend.services import _make_tts
+
+    try:
+        svc, _sr = _make_tts(settings)
+    except RuntimeError as e:
+        return CheckResult(
+            "tts_provider", "fail", str(e),
+            remediation="check [tts] provider in tend.toml or install the missing dep",
+        )
+    return CheckResult(
+        "tts_provider", "ok",
+        f"TTS: {type(svc).__name__}",
+    )
+
+
 def run_all(settings: Settings | None = None) -> list[CheckResult]:
     s = settings or Settings()
-    return [
+    results = [
         check_workspace(),
         check_config(s),
         check_anthropic_key(),
         check_stt(s),
-        check_tts(s),
+        check_tts(s),                # existing — keep until full provider migration
+        check_tts_provider(s),       # NEW
+        check_aec_engine(s),         # NEW
         check_wake_model(s),
         check_claude_cli(),
         check_audio(),
         check_gws_cli(),
         check_webhook_token(),
     ]
+    if _sys.platform == "darwin":
+        results.append(probe_microphone_access())  # NEW: mac TCC probe
+    return results
 
 
 def aggregate_exit_code(results: list[CheckResult]) -> int:

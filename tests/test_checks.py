@@ -152,11 +152,32 @@ def test_run_all_returns_one_result_per_check(monkeypatch, isolated):
     monkeypatch.setattr("shutil.which", lambda c: "/bin/x")
     from tend import paths
     paths.write_version_marker(__import__("tend").__version__)
+    # Stub out new checks that require external deps / hardware.
+    monkeypatch.setattr(
+        "tend.checks.probe_microphone_access",
+        lambda: __import__("tend.checks", fromlist=["CheckResult"]).CheckResult(
+            "microphone", "ok", "mocked",
+        ),
+    )
+    monkeypatch.setattr(
+        "tend.checks.check_tts_provider",
+        lambda s: __import__("tend.checks", fromlist=["CheckResult"]).CheckResult(
+            "tts_provider", "ok", "mocked",
+        ),
+    )
+    monkeypatch.setattr(
+        "tend.checks.check_aec_engine",
+        lambda s: __import__("tend.checks", fromlist=["CheckResult"]).CheckResult(
+            "aec_engine", "ok", "mocked",
+        ),
+    )
     from tend.checks import run_all
     results = run_all(_settings())
     assert {r.name for r in results} == {
         "workspace", "config", "anthropic_key", "stt", "tts",
+        "tts_provider", "aec_engine",
         "wake_model", "claude_cli", "audio", "gws_cli", "webhook_token",
+        "microphone",
     }
 
 

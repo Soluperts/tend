@@ -27,6 +27,20 @@ def all_ok(monkeypatch, tmp_path):
         ],
     )
     monkeypatch.setattr("shutil.which", lambda c: "/bin/x")
+    # Stub new checks that require hardware/optional deps.
+    from tend.checks import CheckResult
+    monkeypatch.setattr(
+        "tend.checks.probe_microphone_access",
+        lambda: CheckResult("microphone", "ok", "mocked ok"),
+    )
+    monkeypatch.setattr(
+        "tend.checks.check_tts_provider",
+        lambda s: CheckResult("tts_provider", "ok", "mocked ok"),
+    )
+    monkeypatch.setattr(
+        "tend.checks.check_aec_engine",
+        lambda s: CheckResult("aec_engine", "ok", "mocked ok"),
+    )
     return tmp_path
 
 
