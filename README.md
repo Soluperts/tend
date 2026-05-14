@@ -6,47 +6,90 @@ The brain is multi-turn within a day-session; conversation context persists acro
 
 ## What you need
 
-- Raspberry Pi 4 or 5 (64-bit Raspberry Pi OS).
-- One USB microphone.
+- Raspberry Pi 4 or 5 (64-bit Raspberry Pi OS), **or** a Mac running macOS 14+ on Apple Silicon.
+- One USB microphone (Linux/Pi) or built-in / USB mic (macOS).
 - One speaker (USB or Bluetooth).
 - Python 3.11+.
 - Internet for cloud STT/TTS/LLM (optional — local fallbacks work offline once models are downloaded).
 
-The satellite assumes **exactly one input and one output device** are connected. Audio I/O uses the system default through PipeWire.
-
-## System packages
-
-```bash
-sudo apt update
-sudo apt install -y \
-  python3-venv python3-dev \
-  portaudio19-dev libportaudio2 \
-  pipewire pipewire-pulse \
-  ffmpeg
-```
-
-Plug in the USB mic and pair/connect the speaker before running.
+The assistant assumes **exactly one input and one output device** are connected. Audio I/O uses the system default through PipeWire (Linux) or CoreAudio (macOS).
 
 ## Install
 
-```bash
-git clone <this-repo> ~/tend
-cd ~/tend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-```
+### Linux (Raspberry Pi / Ubuntu / Debian)
 
-The first run downloads:
-- `faster-whisper` `tiny.en` model (~75 MB, cached under `~/.cache/huggingface`)
-- Silero VAD model (~2 MB)
-- openWakeWord `hey_jarvis` model (~few MB, cached under `~/.cache/openwakeword`)
+Prereqs:
 
-The Piper voice (`en_US-ryan-high.onnx`) is downloaded by Pipecat on first use.
+    sudo apt install portaudio19-dev python3-pip pipx
+    pipx ensurepath
+
+Install:
+
+    pipx install tend
+
+Bootstrap and verify:
+
+    tend setup
+    tend doctor
+
+Install as a systemd user service and start at login:
+
+    tend service install
+    tend service start
+    tend service status
+
+### macOS (Apple Silicon, macOS 14+)
+
+Prereqs:
+
+    brew install python portaudio
+
+Install:
+
+    pipx install tend
+
+Optional state-of-the-art AEC (otherwise tend uses pyaec/Speex by default):
+
+    xcode-select --install
+    brew install webrtc-audio-processing
+    pipx inject tend webrtc-audio-processing
+
+Bootstrap and verify:
+
+    tend setup           # grants microphone access when prompted
+    tend doctor
+
+Install as a LaunchAgent and start:
+
+    tend service install
+    tend service start
+    tend service status
+
+#### Optional: install a Premium voice
+
+The default Apple TTS voice is dated. For markedly better quality
+(~300–600 MB, free), download a Premium voice via VoiceOver Utility,
+which exposes the full voice catalog on macOS 14+:
+
+  1.  Open VoiceOver Utility:  ⌃ ⌥  Fn  F8
+        (or `open -a "VoiceOver Utility"` from the terminal)
+  2.  Select "Speech" in the sidebar → Voices → +
+  3.  Pick a language → pick a voice marked Premium or Enhanced
+  4.  Click Download
+
+After the download finishes:
+
+    tend voices list                   # see what tend can use
+    tend voices set <identifier>       # pick it
+    tend voices test                   # confirm
+
+Note: Apple's Siri-tier voices are not exposed to third-party apps
+via AVSpeechSynthesizer. Premium voices are the highest quality tier
+tend can reach.
 
 ## Configure
 
-tend's user state lives at `$TEND_HOME` (default `~/.tend/`). On first run, populate it with the shipped defaults via `tend setup` (interactive bootstrap — lands in sub-project #4). For now, the minimal flow is:
+tend's user state lives at `$TEND_HOME` (default `~/.tend/`). Run `tend setup` to bootstrap it interactively (prompts for API keys, generates the webhook token, and seeds the default persona and skills). For manual bootstrapping:
 
 ```bash
 mkdir -p ~/.tend
@@ -82,7 +125,8 @@ Set `TEND_HOME` to a project-local workspace so dev work doesn't touch your real
 ```bash
 export TEND_HOME=$PWD/.tend-dev
 mkdir -p $TEND_HOME && echo "0.1.0" > $TEND_HOME/.tend-version
-python -m tend
+python -m tend        # Linux/Pi
+python -m tend        # macOS — same command; CoreAudio + AVSpeechSynthesizer picked automatically
 ```
 
 `.tend-dev/` is gitignored.
@@ -100,24 +144,28 @@ skills_dir = "~/.tend/skills"         # markdown procedures the worker can run/a
 
 If a configured cloud service preflight fails (bad key, no credit, network), tend logs the reason and falls back to its local equivalent.
 
-## Run (development)
+## Running
+
+Development:
 
 ```bash
 python -m tend
 ```
 
-Logs stream to stderr and to `/tmp/tend.log`. Native crash traces (PortAudio etc.) go to `/tmp/tend.faults.log`.
+Logs stream to stderr and to the platform log dir. Native crash traces (PortAudio etc.) go to the platform log dir as `tend.faults.log`.
 
-## Run (production — systemd user service)
+Production (after `tend service install`):
 
 ```bash
-mkdir -p ~/.config/systemd/user
-ln -s ~/tend/deploy/tend.service ~/.config/systemd/user/tend.service
-systemctl --user enable --now tend
-sudo loginctl enable-linger $USER       # one-time, lets the user service start at boot
+# Linux
+systemctl --user start tend
+# macOS
+launchctl kickstart gui/$UID/com.tend.daemon
 ```
 
-Logs: `journalctl --user -u tend`. The service auto-restarts on failure; after 5 failures within 5 minutes systemd marks it as `failed` and stops trying — investigate with `journalctl --user -u tend`.
+Linux: logs via `journalctl --user -u tend`. The service auto-restarts on failure; after 5 failures within 5 minutes systemd marks it as `failed` — investigate with `journalctl --user -u tend`.
+
+macOS: logs at `~/Library/Logs/tend/tend.log`.
 
 ## Use
 
@@ -162,11 +210,14 @@ docs/superpowers/plans/2026-05-05-tend-v1.md
 
 ## Troubleshooting
 
-- **No audio in/out:** check `pactl list short sources` and `pactl list short sinks`. PipeWire must see your mic and speaker as the defaults.
+- **No audio in/out (Linux):** check `pactl list short sources` and `pactl list short sinks`. PipeWire must see your mic and speaker as the defaults.
+- **No audio in/out (macOS):** run `tend doctor`. If the mic permission check fails, open Settings → Privacy & Security → Microphone and enable Terminal (or iTerm, or whatever launched `tend`). Permission persists once granted.
 - **Bluetooth speaker latency:** expect 150–250 ms. Not fixable without switching to wired audio.
+- **Echo on macOS:** if you hear tend's own speech fed back, the AEC filter is not active. Run `tend doctor` — the AEC check will report which engine is in use. Install the `webrtc-audio-processing` extra for improved echo suppression.
 - **Cloud preflight failures:** the startup log prints the exact HTTP status and reason; fix the key or top up credits and restart.
 - **First run is slow:** model downloads. Subsequent runs start in seconds.
-- **systemd marks the service `failed`:** check `journalctl --user -u tend` for the reason. The 5-failures-in-5-minutes guard prevents thrashing-restart loops.
+- **systemd marks the service `failed` (Linux):** check `journalctl --user -u tend` for the reason. The 5-failures-in-5-minutes guard prevents thrashing-restart loops.
+- **LaunchAgent not starting (macOS):** check `launchctl print gui/$UID/com.tend.daemon` for the exit code. Logs at `~/Library/Logs/tend/tend.log`.
 
 ## Development
 

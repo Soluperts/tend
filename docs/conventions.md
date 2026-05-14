@@ -69,7 +69,7 @@ return (init, env, dotenv, toml, secrets)
 - Subcommand list (shipped):
   - `tend setup` — interactive bootstrap (writes `$TEND_HOME/{tend.toml,.env}`, prompts for secrets, auto-generates webhook token, installs optional skills).
   - `tend doctor [--json]` — read-only diagnostic; runs the same `tend.checks` library as setup. Exit 0 all-ok, 1 warn-only, 2 any-fail.
-  - `tend service {install [--force],uninstall,start,stop,status}` — systemd user unit (Linux). `status` exits 0 only when the unit is active, matching systemctl conventions. macOS launchd is sub-project #3 (macOS port).
+  - `tend service {install [--force],uninstall,start,stop,status}` — systemd user unit on Linux; launchd LaunchAgent (`~/Library/LaunchAgents/com.tend.daemon.plist`) on macOS. `status` exits 0 only when the unit/agent is active, matching systemctl conventions.
   - `tend sessions {list,show,tail,cat}` — worker session history.
   - `tend skills {list,show,cat,rm,quarantined,new,install,validate,enable-triggers,disable-triggers}` — skill management (plural, matching `$TEND_HOME/skills/`).
   - `tend schedule {list,show,add,rm}` — cron store wrapper.
@@ -201,7 +201,7 @@ The bar rises before going public — bearer-only is fine for loopback today but
 
 ## Distribution
 
-- **Primary:** PyPI. Recommended user install: `pipx install tend` (isolated venv, on `$PATH`). Document this.
+- **Primary:** PyPI. Recommended user install: `pipx install tend` (isolated venv, on `$PATH`). Document this. macOS users need `brew install portaudio` first; WebRTC AEC3 is opt-in: `pipx inject tend webrtc-audio-processing` (installs the `[aec-webrtc]` extra).
 - **Secondary:** Homebrew tap at `ridhwanluthra/homebrew-tend`. The formula wraps the PyPI release (~20 lines of Ruby). `brew services start tend` writes both launchd plists on macOS and systemd user units on Linux — solving cross-platform service install for free.
 - **`tend service install`** for non-Homebrew users: writes `~/.config/systemd/user/tend.service` (Linux) or `~/Library/LaunchAgents/com.tend.daemon.plist` (macOS). `--uninstall` reverses.
 - **Skip:** AUR, Snap, Debian, Flatpak, `.app` bundle, code signing, notarization. All are revisitable later if users ask.
@@ -210,7 +210,7 @@ The bar rises before going public — bearer-only is fine for loopback today but
 
 - **No `.app` bundle, no code signing, no notarization for v1.** Skipping saves $99/yr Apple Developer cost and a few days of work; users who hit the friction can speak up.
 - **TCC mic permission** triggers on first PyAudio use. Document: Settings → Privacy & Security → Microphone → enable Terminal (or iTerm, or whatever launched `tend`). Once granted, persists.
-- **`audio/channels.py`** selects mono-mic on macOS (no XVF3800 left-channel downmix); selects the XVF3800 path on Linux when the device-name match hits.
+- **`audio/channels.py::select_audio_path`** dispatches by `sys.platform`: macOS → mono + AEC filter; Linux → stereo + StereoToMonoLeft (XVF3800). An optional `[audio] mic_channels = N` override forces the layout for edge cases.
 - **Acoustic echo cancellation:** built-in MacBook mic and speaker are ~10 cm apart with no AEC. tend supports barge-in (the user interrupting while tend is speaking — works today on the Pi via the XVF3800's hardware AEC), so muting the mic during TTS is off the table — it would break that. The v1 strategy is **software AEC**: subtract the played speaker signal from the captured mic signal while leaving the mic stream live. Candidate implementations: WebRTC AEC3 (cross-platform, what browsers use), or the macOS Voice Processing IO unit (Apple's built-in AEC, mac-only). The macOS-port spec picks one.
 - **Service unit on macOS:** launchd plist at `~/Library/LaunchAgents/com.tend.daemon.plist`, loaded via `launchctl load ~/Library/LaunchAgents/com.tend.daemon.plist`. `tend service install` handles this.
 

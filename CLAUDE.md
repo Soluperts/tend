@@ -59,6 +59,15 @@ Two state machines:
 
 Wake/sleep is *attention*. Day-session is *memory*. They don't interact except that an active day-session reset is deferred until Brain is asleep.
 
+On macOS the pipeline diverges slightly: `audio_in_channels=1` and
+no `StereoToMonoLeft`. AEC runs at pipecat's `audio_in_filter` slot
+(default engine: pyaec/Speex). The `OutputAudioCapture` processor sits
+before `transport.output()` to feed the speaker reference signal
+into the AEC's ring buffer. The platform branch lives in
+`audio/channels.py::select_audio_path`. See
+`docs/superpowers/specs/2026-05-13-tend-macos-port-design.md` for
+the full design.
+
 ### Bus-bridge gotcha
 
 The framework's `_BusEdgeProcessor` (which wraps every bridged agent) sends outgoing bus frames **without** a bridge name (`pipecat_subagents/agents/base_agent.py:149`). So a named-bridge filter on `BusBridgeProcessor` would orphan Brain's responses — keep the bridge unnamed (no `bridge=` kwarg) and use `bridged=()` on the child. All canonical examples in pipecat-subagents follow this pattern. Use `exclude_frames=` (not bridge names) to keep specific frame types local; we exclude `TTSSpeakFrame` so wake-word acks ("Yes?") don't broadcast to Brain.
@@ -165,6 +174,7 @@ GeneralWorker is the v1 reference: one worker handles every dispatch (Brain's `d
 
 ## Hardware assumptions
 
+**Linux / Raspberry Pi:**
 - Raspberry Pi 5.
 - One USB microphone.
 - One speaker (USB or Bluetooth — BT adds ~150-250 ms output latency, not fixable).
@@ -172,14 +182,22 @@ GeneralWorker is the v1 reference: one worker handles every dispatch (Brain's `d
 
 USB mic-arrays like the reSpeaker XVF3800 are typically rate-locked to 16 kHz and PortAudio bypasses PipeWire's resampler, so TTS output is pinned to `settings.sample_rate` (default 16 kHz). ElevenLabs serves PCM at the requested rate; Piper resamples internally from the voice's native rate.
 
+**macOS (Apple Silicon, macOS 14+):**
+- Built-in mic + speaker, or USB mic + speaker. CoreAudio via PortAudio.
+- TTS via `AVSpeechSynthesizer` (built-in, zero-install) or ElevenLabs if key is configured.
+- AEC via pyaec/Speex (default) or WebRTC AEC3 (`pipx inject tend webrtc-audio-processing`).
+
 ## Running
 
 ```bash
-# development
+# development (Linux and macOS — CoreAudio / PipeWire picked automatically)
 python -m tend
 
-# production
+# production — Linux
 systemctl --user enable --now tend
+
+# production — macOS (after `tend service install`)
+launchctl kickstart gui/$UID/com.tend.daemon
 
 # isolate hardware from pipeline issues
 python scripts/audio_check.py speaker   # 1 kHz tone
@@ -189,7 +207,7 @@ python scripts/audio_check.py loopback  # record + play back
 
 Config via `tend.toml` (committed) and `.env` (gitignored, secrets only). See README.
 
-Logs: `/tmp/tend.log` (loguru, 5 MB rotation). Faults: `/tmp/tend.faults.log` (faulthandler). systemd journal: `journalctl --user -u tend`.
+Logs: platform log dir (`journalctl --user -u tend` on Linux; `~/Library/Logs/tend/` on macOS). Faults: `tend.faults.log` in the same dir (faulthandler).
 
 ## Proactive triggers
 
