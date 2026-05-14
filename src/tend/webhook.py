@@ -96,7 +96,22 @@ class WebhookServer:
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()
         site = web.TCPSite(self._runner, self._host, self._port)
-        await site.start()
+        try:
+            await site.start()
+        except OSError as e:
+            # errno 48 (EADDRINUSE) on BSD/macOS, errno 98 on Linux.
+            if e.errno in (48, 98):
+                logger.error(
+                    f"webhook port {self._host}:{self._port} is already in use. "
+                    f"Something else is listening (commonly VS Code on 7331, or a "
+                    f"stale `python -m tend` process). Stop the conflicting "
+                    f"process, or set [webhook] port in tend.toml to a free port."
+                )
+                # Clean up partial state so callers don't see a half-initialized runner.
+                await self._runner.cleanup()
+                self._runner = None
+                raise SystemExit(2) from e
+            raise
         logger.info(f"webhook server listening on {self._host}:{self._port}")
 
     async def stop(self) -> None:

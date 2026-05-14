@@ -44,7 +44,10 @@ class WebhookConfig(BaseModel):
     """Webhook server configuration for receiving proactive events."""
 
     host: str = "127.0.0.1"
-    port: int = 7331
+    # 47331 picked deliberately: 7331 collides with VS Code's helper port,
+    # which is a near-universal "first-time tend user" headache on macOS.
+    # Override via [webhook] port in tend.toml if this clashes for you.
+    port: int = 47331
 
 
 class AnnouncerConfig(BaseModel):
