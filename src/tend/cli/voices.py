@@ -95,16 +95,39 @@ def voices_test(
     pipecat pipeline — for that, run `tend` and wake it normally.
     """
     _require_macos()
-    import time
 
+    import objc
     import AVFoundation
+    from Foundation import NSDate, NSObject, NSRunLoop
 
     from tend.config import Settings
 
     settings = Settings()
     voice_id = identifier or settings.avspeech_voice
 
+    # AVSpeechSynthesizer schedules speech on a private dispatch queue
+    # that only runs while the main runloop is pumped. We use a delegate
+    # to detect completion + pump the runloop ourselves until done.
+    class _SpeechDelegate(NSObject):
+        def init(self):
+            self = objc.super(_SpeechDelegate, self).init()
+            if self is None:
+                return None
+            self.done = False
+            self.failed = None
+            return self
+
+        def speechSynthesizer_didFinishSpeechUtterance_(self, _synth, _utt):
+            self.done = True
+
+        def speechSynthesizer_didCancelSpeechUtterance_(self, _synth, _utt):
+            self.done = True
+            self.failed = "cancelled"
+
     synth = AVFoundation.AVSpeechSynthesizer.new()
+    delegate = _SpeechDelegate.alloc().init()
+    synth.setDelegate_(delegate)
+
     utt = AVFoundation.AVSpeechUtterance.speechUtteranceWithString_(
         "tend is now using this voice. It sounds like this."
     )
@@ -118,7 +141,26 @@ def voices_test(
         f"[bold]{voice_id or '(system default)'}[/bold]..."
     )
     synth.speakUtterance_(utt)
-    # speakUtterance_ is async on a private runloop; poll until it finishes.
-    while synth.isSpeaking():
-        time.sleep(0.1)
+
+    # Pump the main runloop in 100 ms slices until the delegate fires.
+    # Hard cap at 30 s to avoid hanging on a stuck engine.
+    loop = NSRunLoop.currentRunLoop()
+    deadline = 30.0
+    elapsed = 0.0
+    slice_ = 0.1
+    while not delegate.done and elapsed < deadline:
+        loop.runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(slice_))
+        elapsed += slice_
+
+    if not delegate.done:
+        Console().print(
+            "[yellow]⚠[/yellow] Speech did not complete within 30 s. "
+            "Check Sound output, volume, and that the selected voice is installed."
+        )
+        raise typer.Exit(code=1)
+
+    if delegate.failed:
+        Console().print(f"[red]✗[/red] Speech {delegate.failed}.")
+        raise typer.Exit(code=1)
+
     Console().print("[green]✓[/green] Done.")
