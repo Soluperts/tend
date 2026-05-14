@@ -202,19 +202,17 @@ class Hub(BaseAgent):
             transport.input(),
             *path.pre_vad_processors,
             VADProcessor(vad_analyzer=SileroVADAnalyzer(
-                # Tightened against the speex-AEC residual floor on
-                # built-in MacBook hardware. Defaults (confidence=0.7,
-                # min_volume=0.6) trip on speech-like residual after
-                # speex subtracts the bot's voice. Measured: residual
-                # peaks ~1.5 % of full scale; raise min_volume to 0.85
-                # so anything below ~2-3 % is rejected. start_secs
-                # bumped to 0.3 s so transient residual blips don't
-                # count as speech.
+                # Tuned against the speex-AEC residual floor on built-in
+                # MacBook hardware. Measured RMS levels in the live log:
+                #   AEC residual (bot solo):  out_rms 5-500   (0.02-1.5%)
+                #   Real user speech:         mic_rms 3000-9000+ (9-30%)
+                # Defaults (0.7/0.6) trip on residual. 0.85/0.85 missed
+                # real speech. min_volume=0.75 sits in the middle.
                 params=VADParams(
-                    confidence=0.85,
-                    start_secs=0.3,
+                    confidence=0.7,
+                    start_secs=0.25,
                     stop_secs=0.4,
-                    min_volume=0.85,
+                    min_volume=0.75,
                 ),
             )),
             OpenWakeWordGate(
