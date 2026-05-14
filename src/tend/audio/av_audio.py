@@ -14,7 +14,22 @@ LocalAudioTransportParams — that's why no device fields are added in v1.
 
 from __future__ import annotations
 
+import asyncio
+from typing import TYPE_CHECKING
+
+from loguru import logger
+from pipecat.frames.frames import InputAudioRawFrame, StartFrame
+from pipecat.transports.base_input import BaseInputTransport
 from pipecat.transports.base_transport import TransportParams
+
+if TYPE_CHECKING:
+    from AVFoundation import (
+        AVAudioConverter,
+        AVAudioEngine,
+        AVAudioFormat,
+        AVAudioPCMBuffer,
+        AVAudioPlayerNode,
+    )
 
 
 class AVAudioTransportParams(TransportParams):
@@ -119,7 +134,6 @@ def _convert_to_int16_bytes(
         out_buf, None, supply_input,
     )
     if status not in (0, 1):
-        from loguru import logger
         logger.error(f"AVAudioConverter status={status} err={err}")
         return b""
 
@@ -184,6 +198,116 @@ def _convert_int16_buffer_to_float32_buffer(
         out, None, supply_input,
     )
     if status not in (0, 1):
-        from loguru import logger
         logger.error(f"output AVAudioConverter status={status} err={err}")
     return out
+
+
+class AVAudioInputTransport(BaseInputTransport):
+    """Captures audio from AVAudioEngine's inputNode with VPIO enabled.
+
+    The transport doesn't own the engine — AVAudioTransport does. We get
+    the engine handed to us in the constructor so input and output share
+    one engine instance.
+    """
+
+    _params: AVAudioTransportParams
+
+    # +12 dB linear gain. VPIO noise-gates user speech ~12 dB at desk
+    # distance (validated in PoC commit 223ac9d). Residual echo stays at
+    # -78 dB after this boost — well below STT thresholds.
+    _POST_TAP_GAIN = 4.0  # ≈ 10 ** (12.0 / 20.0)
+
+    def __init__(
+        self,
+        params: AVAudioTransportParams,
+        *,
+        engine: "AVAudioEngine",
+    ):
+        super().__init__(params)
+        self._engine = engine
+        self._input_node = None
+        self._converter: "AVAudioConverter | None" = None
+        self._target_sample_rate = 0
+        self._tap_installed = False
+
+    async def start(self, frame: StartFrame):
+        await super().start(frame)
+        if self._tap_installed:
+            return
+
+        self._target_sample_rate = (
+            self._params.audio_in_sample_rate or frame.audio_in_sample_rate
+        )
+        self._input_node = self._engine.inputNode()
+
+        # VPIO MUST be enabled BEFORE engine.start() and before any other
+        # configuration. It cannot toggle while the engine is running.
+        ok, err = self._input_node.setVoiceProcessingEnabled_error_(True, None)
+        if not ok:
+            raise RuntimeError(
+                f"setVoiceProcessingEnabled returned False; error={err}. "
+                "Voice processing (AEC + NS + AGC) cannot be activated on "
+                "this Mac. macOS 10.15+ required."
+            )
+        logger.info(
+            f"[av_audio] VPIO enabled: "
+            f"isVoiceProcessingEnabled={self._input_node.isVoiceProcessingEnabled()}"
+        )
+
+        native_format = self._input_node.outputFormatForBus_(0)
+        # Under VPIO this is typically 9 channels (mic + speaker refs) at
+        # 48 kHz Float32 deinterleaved. The converter takes channel 0 only
+        # (the post-VPIO mic) via the explicit channelMap=[0] set in
+        # _make_input_converter.
+        logger.info(
+            f"[av_audio] native input format: "
+            f"sr={native_format.sampleRate()} ch={native_format.channelCount()}"
+        )
+        self._converter = _make_input_converter(
+            native_format, target_sample_rate=self._target_sample_rate,
+        )
+
+        loop = asyncio.get_running_loop()
+        target_sr = self._target_sample_rate
+        converter = self._converter
+        push = self.push_audio_frame
+        gain = self._POST_TAP_GAIN
+
+        import numpy as _np
+
+        def tap_callback(in_buf, when):
+            try:
+                pcm = _convert_to_int16_bytes(
+                    converter, in_buf, target_sample_rate=target_sr,
+                )
+            except Exception as exc:
+                logger.exception(f"[av_audio] tap conversion failed: {exc}")
+                return
+            if not pcm:
+                return
+            # Post-VPIO gain. Multiply with int32 headroom then clip back
+            # to int16 to avoid wrap-around at peaks.
+            samples = _np.frombuffer(pcm, dtype=_np.int16).astype(_np.int32)
+            boosted = _np.clip(samples * gain, -32768, 32767).astype(_np.int16)
+            audio_frame = InputAudioRawFrame(
+                audio=boosted.tobytes(),
+                sample_rate=target_sr,
+                num_channels=1,
+            )
+            asyncio.run_coroutine_threadsafe(push(audio_frame), loop)
+
+        # Tap at NATIVE 9-channel Float32 48 kHz format. The converter
+        # downmixes + resamples; post-tap gain runs in tap_callback.
+        # Installing at a different format than the bus is unreliable per
+        # Apple's docs and produced silent buffers in PoC testing.
+        self._input_node.installTapOnBus_bufferSize_format_block_(
+            0, 1024, native_format, tap_callback,
+        )
+        self._tap_installed = True
+
+        # Idempotent: engine.start() returns True if already running.
+        started, err = self._engine.startAndReturnError_(None)
+        if not started:
+            raise RuntimeError(f"engine.startAndReturnError_ failed: {err}")
+
+        await self.set_transport_ready(frame)

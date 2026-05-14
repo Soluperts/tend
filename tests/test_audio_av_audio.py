@@ -139,3 +139,61 @@ def test_output_converter_int16_mono_to_float32_stereo_48k():
     fc = out.floatChannelData()
     ch0 = bytes(fc[0].as_buffer(out.frameLength()))
     assert any(b != 0 for b in ch0[:32])
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="AVFoundation requires macOS")
+@pytest.mark.asyncio
+async def test_input_transport_start_enables_vpio_and_installs_tap():
+    """start() must enable VPIO on the input node BEFORE engine.start.
+    Order matters — VPIO can't toggle while engine is running."""
+    from unittest.mock import MagicMock, patch
+
+    from pipecat.frames.frames import StartFrame
+    from tend.audio.av_audio import AVAudioInputTransport, AVAudioTransportParams
+
+    # Use a shared call log to capture cross-mock call ordering.
+    call_log: list[str] = []
+
+    fake_input = MagicMock(name="fake_input_node")
+    fake_input.setVoiceProcessingEnabled_error_.side_effect = (
+        lambda enabled, err: call_log.append("setVoiceProcessingEnabled") or (True, None)
+    )
+    fake_input.installTapOnBus_bufferSize_format_block_.side_effect = (
+        lambda *a: call_log.append("installTapOnBus")
+    )
+    fake_input.outputFormatForBus_.return_value = MagicMock(
+        name="native_format", sampleRate=lambda: 48000.0, channelCount=lambda: 9,
+    )
+
+    fake_engine = MagicMock(name="fake_engine")
+    fake_engine.inputNode.return_value = fake_input
+    fake_engine.startAndReturnError_.side_effect = (
+        lambda err: call_log.append("startAndReturnError") or (True, None)
+    )
+
+    params = AVAudioTransportParams(
+        audio_in_enabled=True,
+        audio_out_enabled=False,
+        audio_in_sample_rate=16000,
+        audio_in_channels=1,
+        audio_out_sample_rate=16000,
+    )
+
+    inp = AVAudioInputTransport(params, engine=fake_engine)
+    frame = StartFrame(
+        audio_in_sample_rate=16000,
+        audio_out_sample_rate=16000,
+    )
+    # Patch the converter factory so the test doesn't touch real AVFoundation
+    # with a mock native_format (AVAudioConverter rejects non-ObjC objects).
+    # Also patch set_transport_ready to skip pipeline infrastructure (audio task
+    # creation) that requires a fully initialized pipecat TaskManager.
+    with patch("tend.audio.av_audio._make_input_converter", return_value=MagicMock()), \
+         patch.object(inp, "set_transport_ready", return_value=None):
+        await inp.start(frame)
+
+    # Verify call order: setVoiceProcessingEnabled → installTap → engine.start.
+    vpio_idx = call_log.index("setVoiceProcessingEnabled")
+    tap_idx = call_log.index("installTapOnBus")
+    start_idx = call_log.index("startAndReturnError")
+    assert vpio_idx < tap_idx < start_idx
