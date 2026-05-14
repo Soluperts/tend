@@ -105,11 +105,18 @@ class SpeexAECFilter(BaseAudioFilter):
         self._reference = reference
         self._sample_rate = 0
         self._aec = None
+        self._pyaec_lib = None
         self._enabled = True
 
     async def start(self, sample_rate: int):
         from pyaec import Aec
+        from pyaec import lib as _pyaec_lib
         self._sample_rate = sample_rate
+        # Keep a reference to pyaec's ctypes lib on the instance. pyaec stores it
+        # as a module-level global; during CPython interpreter shutdown the global
+        # can be cleared before Aec.__del__ runs, causing a SIGSEGV. Holding our
+        # own reference here keeps it alive until we explicitly tear down in stop().
+        self._pyaec_lib = _pyaec_lib
         self._aec = Aec(
             frame_size=self._FRAME_SAMPLES,
             filter_length=self._FILTER_LENGTH,
@@ -118,7 +125,13 @@ class SpeexAECFilter(BaseAudioFilter):
         )
 
     async def stop(self):
+        # Explicitly call AecDestroy while our lib reference is still valid,
+        # then null pyaec's internal pointer so Aec.__del__ skips a double-free.
+        if self._aec is not None and self._pyaec_lib is not None and self._aec._aec:
+            self._pyaec_lib.AecDestroy(self._aec._aec)
+            self._aec._aec = None
         self._aec = None
+        self._pyaec_lib = None
 
     async def process_frame(self, frame: FilterControlFrame):
         if isinstance(frame, FilterEnableFrame):
@@ -131,17 +144,28 @@ class SpeexAECFilter(BaseAudioFilter):
         # Read aligned reference bytes.
         ref = self._reference.read(len(audio))
 
-        # pyaec works on int16 lists; convert via array.array for speed.
         import array
+        from ctypes import c_int16
+
         mic = array.array("h")
         mic.frombytes(audio)
         rfa = array.array("h")
         rfa.frombytes(ref)
 
-        # pyaec.cancel_echo wants equal-length buffers, returns list[int16].
-        cleaned = self._aec.cancel_echo(list(mic), list(rfa))
+        # Call AecCancelEcho directly with named ctypes arrays rather than via
+        # pyaec.Aec.cancel_echo(), which creates unnamed ctypes temporaries that
+        # enter a GC cycle with asyncio internals and survive into interpreter
+        # shutdown, causing a SIGSEGV after pyaec's module-level state is torn
+        # down. Named references avoid that ordering hazard entirely.
+        frame_size = len(mic)
+        mic_c = (c_int16 * frame_size)(*mic.tolist())
+        ref_c = (c_int16 * frame_size)(*rfa.tolist())
+        out_c = (c_int16 * frame_size)()
+        self._pyaec_lib.AecCancelEcho(
+            self._aec._aec, mic_c, ref_c, out_c, frame_size,
+        )
+        out = array.array("h", list(out_c)).tobytes()
 
-        out = array.array("h", cleaned).tobytes()
         # Defensive: if pyaec ever returns mismatched length, pad/truncate to input length.
         if len(out) != len(audio):
             out = (out + b"\x00" * len(audio))[:len(audio)]
