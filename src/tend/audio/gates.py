@@ -108,7 +108,7 @@ class OpenWakeWordGate(FrameProcessor):
         logger.info(f"[oww] loading model from {path}")
         try:
             return Model(
-                wakeword_model_paths=[path],
+                wakeword_models=[path],
                 inference_framework=inference_framework,
             )
         except Exception as e:

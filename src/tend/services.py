@@ -261,7 +261,20 @@ class AVSpeechSynthesizerTTSService(TTSService):
         sample_rate: int = 16000,
         **kwargs,
     ):
-        super().__init__(sample_rate=sample_rate, **kwargs)
+        # Pipecat 1.1's TTSService requires every TTSSettings field to be
+        # initialized (None for unsupported fields). AVSpeechSynthesizer has
+        # no "model" concept (the voice IS the model) and we don't expose a
+        # separate language setting — language is part of the voice id.
+        from pipecat.services.settings import TTSSettings
+
+        super().__init__(
+            sample_rate=sample_rate,
+            settings=TTSSettings(
+                voice=voice_identifier or None,
+                language=None,
+            ),
+            **kwargs,
+        )
         self._voice_identifier = voice_identifier
         self._sample_rate = sample_rate
 
