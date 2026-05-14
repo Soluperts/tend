@@ -53,12 +53,22 @@ src/tend/audio/av_audio.py
 ```
 engine = AVAudioEngine()
 input_node = engine.inputNode      # forces VPIO unit construction
+output_node = engine.outputNode
+
 input_node.setVoiceProcessingEnabled_error_(True, None)  # MUST be before start
                                                           # enables AEC+NS+AGC
                                                           # on BOTH I/O buses
+
+# Output path: player → outputNode DIRECT (not via mainMixer).
+# Reason: under VPIO, mainMixer's default 44.1 kHz format conflicts with
+# outputNode's 48 kHz, and engine.start() fails with err=-10875
+# (kAudioUnitErr_FailedInitialization). Validated empirically in the PoC.
 player = AVAudioPlayerNode()
 engine.attachNode_(player)
-engine.connect_to_format_(player, engine.mainMixerNode, output_format)
+out_format = output_node.inputFormatForBus_(0)   # 2ch 48 kHz Float32 deinterleaved
+engine.connect_to_format_(player, output_node, out_format)
+
+# Input tap at native (9-channel) format; conversion happens in the callback.
 input_node.installTapOnBus_bufferSize_format_block_(
     0, 1024, input_node.outputFormatForBus_(0), tap_callback,
 )
@@ -70,14 +80,22 @@ engine.startAndReturnError_(None)
 
 ### Format handling
 
-The input node's native output format after VPIO is enabled is the audio HAL's preferred format — typically 48 kHz Float32 mono on built-in MacBook mics. Two-stage conversion in the tap callback:
+**Input side (mic):** When VPIO is enabled, the input node's `outputFormat(forBus: 0)` exposes a 9-channel Float32 deinterleaved aggregate device at 48 kHz: channel 0 is the post-VPIO mic, channels 1-8 are the speaker-reference channels VPIO uses internally. The tap is installed at this native format.
 
-1. Tap receives `AVAudioPCMBuffer` at native format.
-2. `AVAudioConverter` (constructed once at start, reused per buffer) converts to 16 kHz int16 mono — the format Silero VAD / Deepgram / wake word expect.
-3. Wrap the converted bytes in an `InputAudioRawFrame(audio=bytes, sample_rate=16000, num_channels=1)`.
-4. Hand to asyncio via `loop.call_soon_threadsafe(push_audio_frame, frame)` or `asyncio.run_coroutine_threadsafe`.
+Conversion path in the tap callback:
 
-For output: TTS produces int16 PCM at `tts_sample_rate` (16 kHz with our resampled AVSpeechSynthesizer output). We wrap in `AVAudioPCMBuffer` at that format and schedule on the player node; the `mainMixerNode` handles upconversion to the hardware output rate. AVAudioEngine handles this conversion automatically along the mixer path (this is the path that *does* work — unlike the tap-with-different-format path which is unreliable).
+1. Tap receives `AVAudioPCMBuffer` at 9ch Float32 48 kHz.
+2. `AVAudioConverter` (constructed once at `start()`, reused per buffer) converts to 1ch int16 16 kHz. **The converter's default `channelMap` is `[-1]` (drop output, produces zero-valued buffers); we must explicitly set `channelMap = [0]` to take channel 0 from the input.** Validated empirically in the PoC — without this, captured signal is silent.
+3. Apply post-VPIO gain. **VPIO aggressively noise-gates at desk distance** (the design point for tend), attenuating user speech ~12 dB compared to the raw mic. Multiply int16 samples by ~4× (linear, =+12 dB) with clipping. Residual echo (currently suppressed to ~-90 dB by VPIO per the PoC) stays at -78 dB after boost — still ~40 dB below Deepgram's STT floor.
+4. Wrap the result in an `InputAudioRawFrame(audio=bytes, sample_rate=16000, num_channels=1)` and hand to asyncio via `asyncio.run_coroutine_threadsafe`.
+
+**Output side (speaker):** Output node's input format under VPIO is 2ch 48 kHz Float32 deinterleaved (the OS-negotiated format for the speaker hardware). We cannot wrap our int16 16 kHz mono TTS output in that format directly. Two-stage conversion at `write_audio_frame` time:
+
+1. Build an int16 source buffer at the TTS-produced rate (16 kHz mono).
+2. Use an output-side `AVAudioConverter` (also built once at `start()`) to convert 16 kHz int16 mono → 48 kHz Float32 deinterleaved at the output node's required channel count (typically 2; copy mono to both channels).
+3. Schedule the resulting Float32 buffer on the player with `.dataPlayedBack` completion type.
+
+This adds one extra conversion compared to the original spec, but it's required by the VPIO output constraints.
 
 ### Threading
 
@@ -146,25 +164,17 @@ Adds one value:
 
 Picking `vpio` on Linux raises `ValueError("aec_engine='vpio' is only supported on macOS")` at startup, with a clear message pointing at `aec_engine="speex"` or `"off"`.
 
-## De-risking — Task 1: standalone PoC
+## De-risking — Task 1: standalone PoC (DONE)
 
-Before any pipecat plumbing, ship `scripts/audio_check_vpio.py`. Mirrors the existing `scripts/audio_check.py` script shape. Pure PyObjC, no tend imports.
+`scripts/audio_check_vpio.py` shipped at commit `223ac9d`. Validated on user's MacBook (built-in mic+speaker, macOS 26 Tahoe). Measured results:
 
-What it does, in order:
+- **1 kHz echo suppression: +77 dB** (after post-tap +12 dB gain; +91 dB raw). Far exceeds the ≥30 dB target.
+- **Speech preserved at peak 262, RMS 51** — matches PyAudio raw baseline (peak 239), confirming user voice is recoverable to STT-usable levels.
+- **No engine init failures**, no segfaults, all PyObjC bindings work as expected on macOS 26.
 
-1. Construct `AVAudioEngine`. Enable VPIO on the input node. Verify `isVoiceProcessingEnabled()` returns true.
-2. Construct `AVAudioPlayerNode`, attach to engine, connect to `mainMixerNode` at 16 kHz int16 mono format.
-3. Install tap on inputNode at the bus's native format. Tap callback converts each buffer to 16 kHz int16 mono via `AVAudioConverter` and appends to an in-memory buffer.
-4. Prepare and start the engine.
-5. Schedule a 3-second 1 kHz tone PCM buffer on the player node.
-6. Capture 3 seconds of mic input while the tone plays.
-7. Stop the engine.
-8. Compute the RMS amplitude of the captured signal in the 1 kHz frequency band (simple FFT) and compare to the tone's emit RMS. Report suppression in dB. With VPIO working, expect ≥40 dB.
-9. Run a second capture without playing the tone, while the user speaks. Confirm the captured speech RMS is preserved (no false-positive suppression of user voice).
+The PoC drove the four design corrections folded into the **Format handling** and **Engine lifecycle** sections above (9-channel aggregate input, explicit channelMap=[0], direct player→outputNode connection, post-tap gain). These were not visible in Apple's docs and only surfaced empirically.
 
-The script accepts no arguments and prints a one-line `PASS` / `FAIL` summary plus the measured numbers. Run with `python scripts/audio_check_vpio.py`.
-
-If the PoC fails on user's macOS 26 / hardware, we discover it in ~50 lines of code before any pipecat code is written. If it passes, the architecture is proven for the rest of the implementation.
+Re-run with `python scripts/audio_check_vpio.py` if hardware changes — same `PASS`/`FAIL` summary.
 
 ## Configuration changes
 
