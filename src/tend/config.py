@@ -97,6 +97,10 @@ class Settings(BaseSettings):
     # Audio
     sample_rate: int = 16000
 
+    # Audio path & AEC (macOS port)
+    mic_channels: int | None = None         # platform default: 1 on macOS, 2 on Linux
+    aec_engine: str = "auto"                # auto | webrtc-aec3 | speex | off
+
     # Wake / sleep
     openwakeword_model: str = "hey_jarvis"
     wake_threshold: float = 0.5

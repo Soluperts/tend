@@ -15,9 +15,15 @@ Frames that are not stereo `InputAudioRawFrame`s pass through unchanged.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Callable, Optional
+
 import numpy as np
+from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
 from pipecat.frames.frames import Frame, InputAudioRawFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+
+from tend.config import Settings
 
 
 def _stereo_to_mono_left(stereo_pcm16: bytes) -> bytes:
@@ -43,3 +49,38 @@ class StereoToMonoLeft(FrameProcessor):
             await self.push_frame(mono, direction)
             return
         await self.push_frame(frame, direction)
+
+
+@dataclass(frozen=True)
+class AudioPath:
+    """Result of platform-aware audio-path selection."""
+    in_channels: int
+    pre_vad_processors: tuple[FrameProcessor, ...]
+    aec_filter: Optional[BaseAudioFilter]
+
+
+def select_audio_path(
+    settings: Settings,
+    *,
+    aec_filter_factory: Callable[..., Optional[BaseAudioFilter]],
+) -> AudioPath:
+    """Return the audio-path tuple appropriate for this platform.
+
+    `aec_filter_factory` is injected so this function can be unit-tested
+    without pulling in the AEC engine; production callers pass
+    `tend.audio.aec.make_aec_filter`.
+    """
+    import sys as _sys
+
+    explicit = settings.mic_channels
+    if explicit == 2 or (explicit is None and _sys.platform != "darwin"):
+        return AudioPath(
+            in_channels=2,
+            pre_vad_processors=(StereoToMonoLeft(),),
+            aec_filter=aec_filter_factory(settings) if _sys.platform == "darwin" else None,
+        )
+    return AudioPath(
+        in_channels=1,
+        pre_vad_processors=(),
+        aec_filter=aec_filter_factory(settings),
+    )
