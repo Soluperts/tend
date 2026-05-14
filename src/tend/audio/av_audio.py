@@ -18,7 +18,7 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from pipecat.frames.frames import InputAudioRawFrame, StartFrame
+from pipecat.frames.frames import InputAudioRawFrame, OutputAudioRawFrame, StartFrame
 from pipecat.transports.base_input import BaseInputTransport
 from pipecat.transports.base_output import BaseOutputTransport
 from pipecat.transports.base_transport import TransportParams
@@ -399,3 +399,32 @@ class AVAudioOutputTransport(BaseOutputTransport):
         self._player.play()
         self._started = True
         await self.set_transport_ready(frame)
+
+    async def write_audio_frame(self, frame: OutputAudioRawFrame) -> bool:  # type: ignore[override]
+        if self._player is None or self._converter is None or self._output_format is None:
+            return False
+
+        # AVAudioPlayerNodeCompletionDataPlayedBack == 0 in CoreAudio headers.
+        # PyObjC's AVFoundation top-level doesn't always export the constant;
+        # the literal is safe and well-defined.
+        COMPLETION_DATA_PLAYED_BACK = 0
+
+        # Convert int16 mono @ tts_sample_rate → Float32 @ output node's
+        # natural format (typically 2ch 48 kHz under VPIO).
+        src = _int16_pcm_buffer(frame.audio, sample_rate=self._sample_rate)
+        out_buf = _convert_int16_buffer_to_float32_buffer(
+            self._converter, src, target_format=self._output_format,
+        )
+
+        loop = asyncio.get_running_loop()
+        done = asyncio.Event()
+
+        def completion(*args, **kwargs):
+            # Fires on a CoreAudio thread. Marshal to loop.
+            loop.call_soon_threadsafe(done.set)
+
+        self._player.scheduleBuffer_completionCallbackType_completionHandler_(
+            out_buf, COMPLETION_DATA_PLAYED_BACK, completion,
+        )
+        await done.wait()
+        return True

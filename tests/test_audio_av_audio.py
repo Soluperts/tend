@@ -361,3 +361,74 @@ async def test_output_transport_start_attaches_player_to_output_node(monkeypatch
     # The mainMixerNode must NOT be referenced at all in the connect chain.
     assert not fake_engine.mainMixerNode.called
     fake_player.play.assert_called_once()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="AVFoundation requires macOS")
+@pytest.mark.asyncio
+async def test_output_transport_write_frame_blocks_until_completion(monkeypatch):
+    """write_audio_frame schedules a buffer and awaits .dataPlayedBack
+    completion. We verify it doesn't return until the fake completion
+    callback fires."""
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from pipecat.frames.frames import OutputAudioRawFrame, StartFrame
+    from tend.audio.av_audio import AVAudioOutputTransport, AVAudioTransportParams
+
+    fake_engine = MagicMock()
+    fake_engine.startAndReturnError_.return_value = (True, None)
+    fake_player = MagicMock()
+
+    # Capture the completion handler scheduleBuffer is given so the test
+    # can fire it from outside.
+    captured_handler = []
+    def fake_schedule(buf, ctype, handler):
+        captured_handler.append(handler)
+    fake_player.scheduleBuffer_completionCallbackType_completionHandler_.side_effect = (
+        fake_schedule
+    )
+
+    fake_output_node = MagicMock()
+    fake_output_format = MagicMock(
+        channelCount=lambda: 2, sampleRate=lambda: 48000.0,
+    )
+    fake_output_node.inputFormatForBus_.return_value = fake_output_format
+    fake_engine.outputNode.return_value = fake_output_node
+
+    monkeypatch.setattr("tend.audio.av_audio._make_player_node", lambda: fake_player)
+    monkeypatch.setattr(
+        "tend.audio.av_audio._int16_pcm_buffer",
+        lambda pcm, sample_rate: MagicMock(),
+    )
+    monkeypatch.setattr(
+        "tend.audio.av_audio._make_output_converter",
+        lambda *a, **kw: MagicMock(),
+    )
+    monkeypatch.setattr(
+        "tend.audio.av_audio._convert_int16_buffer_to_float32_buffer",
+        lambda *a, **kw: MagicMock(name="float32_buf"),
+    )
+
+    async def fake_set_ready(frame):
+        return None
+    params = AVAudioTransportParams(
+        audio_in_enabled=False, audio_out_enabled=True,
+        audio_in_sample_rate=16000, audio_in_channels=1,
+        audio_out_sample_rate=16000,
+    )
+    out = AVAudioOutputTransport(params, engine=fake_engine)
+    monkeypatch.setattr(out, "set_transport_ready", fake_set_ready)
+    await out.start(StartFrame(audio_in_sample_rate=16000, audio_out_sample_rate=16000))
+
+    frame = OutputAudioRawFrame(audio=b"\x00\x01" * 160, sample_rate=16000, num_channels=1)
+    task = asyncio.create_task(out.write_audio_frame(frame))
+
+    # Give write_audio_frame a chance to enter the await.
+    await asyncio.sleep(0.01)
+    assert not task.done()
+    assert len(captured_handler) == 1
+
+    # Fire the completion handler from a "CoreAudio thread" (synchronous is fine for the test).
+    captured_handler[0]()
+    result = await asyncio.wait_for(task, timeout=1.0)
+    assert result is True
