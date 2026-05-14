@@ -400,6 +400,13 @@ class AVAudioOutputTransport(BaseOutputTransport):
         self._started = True
         await self.set_transport_ready(frame)
 
+    async def cleanup(self):
+        await super().cleanup()
+        if self._player is not None:
+            self._player.stop()
+            self._player = None
+        self._started = False
+
     async def write_audio_frame(self, frame: OutputAudioRawFrame) -> bool:  # type: ignore[override]
         if self._player is None or self._converter is None or self._output_format is None:
             return False

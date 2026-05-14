@@ -432,3 +432,42 @@ async def test_output_transport_write_frame_blocks_until_completion(monkeypatch)
     captured_handler[0]()
     result = await asyncio.wait_for(task, timeout=1.0)
     assert result is True
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="AVFoundation requires macOS")
+@pytest.mark.asyncio
+async def test_output_transport_cleanup_stops_player(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from pipecat.frames.frames import StartFrame
+    from tend.audio.av_audio import AVAudioOutputTransport, AVAudioTransportParams
+
+    fake_engine = MagicMock()
+    fake_engine.startAndReturnError_.return_value = (True, None)
+    fake_player = MagicMock()
+    fake_output_node = MagicMock()
+    fake_output_node.inputFormatForBus_.return_value = MagicMock(
+        channelCount=lambda: 2, sampleRate=lambda: 48000.0,
+    )
+    fake_engine.outputNode.return_value = fake_output_node
+
+    monkeypatch.setattr("tend.audio.av_audio._make_player_node", lambda: fake_player)
+    monkeypatch.setattr(
+        "tend.audio.av_audio._make_output_converter",
+        lambda *a, **kw: MagicMock(),
+    )
+
+    async def fake_set_ready(frame):
+        return None
+    params = AVAudioTransportParams(
+        audio_in_enabled=False, audio_out_enabled=True,
+        audio_in_sample_rate=16000, audio_in_channels=1,
+        audio_out_sample_rate=16000,
+    )
+    out = AVAudioOutputTransport(params, engine=fake_engine)
+    monkeypatch.setattr(out, "set_transport_ready", fake_set_ready)
+    await out.start(StartFrame(audio_in_sample_rate=16000, audio_out_sample_rate=16000))
+
+    await out.cleanup()
+
+    fake_player.stop.assert_called_once()
