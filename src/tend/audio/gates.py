@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import time
 
 import numpy as np
@@ -71,10 +72,13 @@ class OpenWakeWordGate(FrameProcessor):
     def _build_model(self):
         from openwakeword import get_pretrained_model_paths
         from openwakeword.model import Model
+        from openwakeword.utils import download_models
 
-        # Resolve model_name to a file path by searching pretrained models.
-        # e.g. "hey_jarvis" matches "hey_jarvis_v0.1.onnx".
-        all_paths = get_pretrained_model_paths()
+        # tflite-runtime ships Linux wheels only — on macOS openwakeword runs
+        # through onnxruntime instead, so we must ask for the .onnx variants
+        # of the pretrained model paths.
+        inference_framework = "onnx" if sys.platform == "darwin" else "tflite"
+        all_paths = get_pretrained_model_paths(inference_framework=inference_framework)
         matched = [
             p for p in all_paths
             if os.path.basename(p).startswith(self._model_name)
@@ -85,9 +89,28 @@ class OpenWakeWordGate(FrameProcessor):
                 f"Available: {[os.path.basename(p) for p in all_paths]}"
             )
         path = matched[0]
+
+        # openwakeword ships package code but downloads model weights lazily
+        # from its GitHub releases. First run on a fresh install: fetch them.
+        if not os.path.exists(path):
+            logger.info(
+                "[oww] model weights missing on disk; downloading openwakeword "
+                "feature + wakeword models (one-time, ~50 MB)..."
+            )
+            download_models()
+
+        if not os.path.exists(path):
+            raise ValueError(
+                f"openWakeWord: model file still missing after download: {path}. "
+                f"Check network connectivity and disk space."
+            )
+
         logger.info(f"[oww] loading model from {path}")
         try:
-            return Model(wakeword_model_paths=[path])
+            return Model(
+                wakeword_model_paths=[path],
+                inference_framework=inference_framework,
+            )
         except Exception as e:
             logger.error(f"openWakeWord model '{self._model_name}' failed to load: {e!r}")
             raise
