@@ -270,6 +270,7 @@ class AVSpeechSynthesizerTTSService(TTSService):
         super().__init__(
             sample_rate=sample_rate,
             settings=TTSSettings(
+                model=None,
                 voice=voice_identifier or None,
                 language=None,
             ),
