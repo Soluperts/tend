@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     whisper_model: str = "tiny.en"
 
     # TTS
+    # TTS provider (see roadmap item #5; macOS port lands the provider field early)
+    tts_provider: str = "auto"           # auto | elevenlabs | avspeech | piper
+    avspeech_voice: str = ""             # AVSpeechSynthesisVoice identifier; empty = system default
     elevenlabs_voice_id: str = "EXAVITQu4vr4xnSDxMaL"
     elevenlabs_model: str = "eleven_turbo_v2_5"
     # Playback speed for ElevenLabs. None keeps the API default (1.0).

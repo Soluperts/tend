@@ -15,6 +15,15 @@ from pipecat.services.tts_service import TTSService
 from tend.config import Settings
 
 
+def _avfoundation_importable() -> bool:
+    """Return True if the AVFoundation PyObjC bridge is available."""
+    try:
+        import AVFoundation  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 # STT ---------------------------------------------------------------------
 
 def _check_deepgram(api_key: str) -> str | None:
@@ -86,42 +95,118 @@ def _check_elevenlabs(api_key: str) -> str | None:
 
 
 def _make_tts(settings: Settings) -> tuple[TTSService, int]:
-    """Return (service, output_sample_rate).
+    """Resolve [tts] provider to a concrete pipecat TTSService instance.
 
     Output rate is pinned to settings.sample_rate so the local audio transport
     can play it without resampling (USB mic-arrays like the reSpeaker are
     typically rate-locked to 16 kHz). ElevenLabs serves PCM at the requested
     rate; Piper resamples internally from the voice's native rate.
+
+    Returns: (service, sample_rate).
     """
+    import os
+    import sys
+
     rate = settings.sample_rate
-    if settings.elevenlabs_api_key:
-        err = _check_elevenlabs(settings.elevenlabs_api_key)
-        if err:
-            logger.warning(f"ElevenLabs preflight failed: {err}; falling back to local Piper")
+    provider = (settings.tts_provider or "auto").lower()
+
+    # Whether auto-resolution already validated the provider (skip preflight).
+    _auto_resolved = False
+
+    if provider == "auto":
+        if sys.platform == "darwin":
+            if _avfoundation_importable():
+                provider = "avspeech"
+            elif os.environ.get("ELEVENLABS_API_KEY") or settings.elevenlabs_api_key:
+                # AVFoundation unavailable but a key is present — use ElevenLabs
+                # without preflight (no Piper fallback on macOS; trust the key).
+                provider = "elevenlabs"
+                _auto_resolved = True
+            else:
+                raise RuntimeError(
+                    "no working TTS provider on macOS: AVFoundation is not "
+                    "importable and ELEVENLABS_API_KEY is not set. Install "
+                    "pyobjc-framework-AVFoundation or set ELEVENLABS_API_KEY."
+                )
         else:
-            from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
-            settings_kwargs: dict = {
-                "voice": settings.elevenlabs_voice_id,
-                "model": settings.elevenlabs_model,
-            }
-            if settings.elevenlabs_speed is not None:
-                settings_kwargs["speed"] = settings.elevenlabs_speed
-            return (
-                ElevenLabsTTSService(
-                    api_key=settings.elevenlabs_api_key,
-                    sample_rate=rate,
-                    settings=ElevenLabsTTSService.Settings(**settings_kwargs),
-                ),
-                rate,
+            # Linux: prefer ElevenLabs key if present, else Piper.
+            provider = "elevenlabs" if settings.elevenlabs_api_key else "piper"
+
+    if provider == "avspeech":
+        if sys.platform != "darwin":
+            raise RuntimeError(
+                "tts_provider='avspeech' is macOS-only (uses AVSpeechSynthesizer)."
             )
-    from pipecat.services.piper.tts import PiperTTSService
-    return (
-        PiperTTSService(
-            settings=PiperTTSService.Settings(voice=settings.piper_voice),
+        svc = AVSpeechSynthesizerTTSService(
+            voice_identifier=settings.avspeech_voice,
             sample_rate=rate,
-        ),
-        rate,
-    )
+        )
+        return svc, rate
+
+    if provider == "piper":
+        if sys.platform == "darwin":
+            raise RuntimeError(
+                "tts_provider='piper' requires a Linux Piper HTTP server. "
+                "On macOS use tts_provider='avspeech' or 'elevenlabs'."
+            )
+        import aiohttp
+        from pipecat.services.piper.tts import PiperTTSService
+        session = aiohttp.ClientSession()
+        return (
+            PiperTTSService(
+                base_url=settings.piper_voice,  # piper_voice holds the HTTP server URL on Linux
+                aiohttp_session=session,
+                sample_rate=rate,
+            ),
+            rate,
+        )
+
+    if provider == "elevenlabs":
+        api_key = settings.elevenlabs_api_key or os.environ.get("ELEVENLABS_API_KEY")
+        if api_key:
+            # Skip preflight when auto-resolved on macOS (no Piper fallback available).
+            if not _auto_resolved:
+                err = _check_elevenlabs(api_key)
+                if err:
+                    logger.warning(
+                        f"ElevenLabs preflight failed: {err}; falling back to local Piper"
+                    )
+                    api_key = None  # signal fallback
+            if api_key:
+                from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
+                params_kwargs: dict = {}
+                if settings.elevenlabs_speed is not None:
+                    params_kwargs["speed"] = settings.elevenlabs_speed
+                return (
+                    ElevenLabsTTSService(
+                        api_key=api_key,
+                        voice_id=settings.elevenlabs_voice_id,
+                        model=settings.elevenlabs_model,
+                        sample_rate=rate,
+                        params=ElevenLabsTTSService.InputParams(**params_kwargs),
+                    ),
+                    rate,
+                )
+        # No key or preflight failed — fall back to Piper on Linux.
+        if sys.platform == "darwin":
+            raise RuntimeError(
+                "no working TTS provider on macOS: ELEVENLABS_API_KEY is not set "
+                "or preflight failed and Piper is Linux-only. "
+                "Install pyobjc-framework-AVFoundation or set ELEVENLABS_API_KEY."
+            )
+        import aiohttp
+        from pipecat.services.piper.tts import PiperTTSService
+        session = aiohttp.ClientSession()
+        return (
+            PiperTTSService(
+                base_url=settings.piper_voice,
+                aiohttp_session=session,
+                sample_rate=rate,
+            ),
+            rate,
+        )
+
+    raise ValueError(f"Unknown tts_provider: {provider!r}")
 
 
 # Brain LLM ---------------------------------------------------------------
