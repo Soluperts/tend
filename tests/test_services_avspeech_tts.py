@@ -12,16 +12,16 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_avspeech_service_emits_started_audio_stopped(monkeypatch):
-    """When run_tts is called, the service emits the standard pipecat
-    sequence: TTSStartedFrame → TTSAudioRawFrame(...) → TTSStoppedFrame."""
+async def test_avspeech_service_emits_audio_frames(monkeypatch):
+    """When run_tts is called, the service produces audio frames carrying
+    the PCM bytes from `_synthesize_to_pcm`. Pipecat 1.1 emits the
+    start/stop frames inside `_stream_audio_frames_from_iterator`; we
+    only verify the audio body here."""
     fake_avfoundation = MagicMock(name="AVFoundation")
     monkeypatch.setitem(sys.modules, "AVFoundation", fake_avfoundation)
 
     from tend.services import AVSpeechSynthesizerTTSService
-    from pipecat.frames.frames import (
-        TTSAudioRawFrame, TTSStartedFrame, TTSStoppedFrame,
-    )
+    from pipecat.frames.frames import TTSAudioRawFrame
 
     svc = AVSpeechSynthesizerTTSService(voice_identifier="", sample_rate=16000)
 
@@ -33,12 +33,9 @@ async def test_avspeech_service_emits_started_audio_stopped(monkeypatch):
     monkeypatch.setattr(svc, "_synthesize_to_pcm", fake_synth)
 
     frames = []
-    async for frame in svc.run_tts("hello"):
+    async for frame in svc.run_tts("hello", context_id="test-ctx"):
         frames.append(frame)
 
-    assert isinstance(frames[0], TTSStartedFrame)
-    assert any(isinstance(f, TTSAudioRawFrame) for f in frames)
-    assert isinstance(frames[-1], TTSStoppedFrame)
-
     audio_frames = [f for f in frames if isinstance(f, TTSAudioRawFrame)]
+    assert audio_frames, "expected at least one TTSAudioRawFrame"
     assert sum(len(f.audio) for f in audio_frames) == 320

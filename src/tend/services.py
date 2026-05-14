@@ -359,17 +359,35 @@ class AVSpeechSynthesizerTTSService(TTSService):
             if chunk:
                 yield chunk
 
-    async def run_tts(self, text: str):
-        from pipecat.frames.frames import (
-            TTSAudioRawFrame, TTSStartedFrame, TTSStoppedFrame,
-        )
+    async def run_tts(self, text: str, context_id: str):
+        """Pipecat 1.1 entry point.
 
-        yield TTSStartedFrame()
-        async for pcm in self._synthesize_to_pcm(text):
-            yield TTSAudioRawFrame(
-                audio=pcm, sample_rate=self._sample_rate, num_channels=1,
-            )
-        yield TTSStoppedFrame()
+        Yields the start/audio/stop frame sequence. The framework's
+        `_stream_audio_frames_from_iterator` handles framing and
+        resampling — we just produce raw int16 mono PCM bytes at
+        `self._sample_rate` and hand them over.
+        """
+        from pipecat.frames.frames import ErrorFrame
+
+        try:
+            await self.start_tts_usage_metrics(text)
+
+            async def _pcm_iter():
+                async for pcm in self._synthesize_to_pcm(text):
+                    yield pcm
+
+            async for frame in self._stream_audio_frames_from_iterator(
+                _pcm_iter(),
+                in_sample_rate=self._sample_rate,
+                context_id=context_id,
+            ):
+                await self.stop_ttfb_metrics()
+                yield frame
+        except Exception as e:
+            logger.error(f"{self} exception: {e}")
+            yield ErrorFrame(error=f"AVSpeechSynthesizer error: {e}")
+        finally:
+            await self.stop_ttfb_metrics()
 
 
 def _ptr_to_bytes(ptr, n: int) -> bytes:
