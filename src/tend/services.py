@@ -310,19 +310,14 @@ class AVSpeechSynthesizerTTSService(TTSService):
         import asyncio
         import array
         import audioop
+        import threading
+
+        from Foundation import NSDate, NSRunLoop
 
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
         SENTINEL = object()
-
-        synth = AVFoundation.AVSpeechSynthesizer.new()
-        utt = AVFoundation.AVSpeechUtterance.speechUtteranceWithString_(text)
-        if self._voice_identifier:
-            voice = AVFoundation.AVSpeechSynthesisVoice.voiceWithIdentifier_(
-                self._voice_identifier,
-            )
-            if voice is not None:
-                utt.setVoice_(voice)
+        done_event = threading.Event()
 
         call_count = {"n": 0, "bytes": 0}
 
@@ -332,6 +327,7 @@ class AVSpeechSynthesizerTTSService(TTSService):
                 if buffer is None:
                     logger.debug(f"[avspeech] callback fired with buffer=None (call #{call_count['n']}); sending sentinel")
                     loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
+                    done_event.set()
                     return
 
                 fmt = buffer.format()
@@ -348,6 +344,7 @@ class AVSpeechSynthesizerTTSService(TTSService):
                 if n_frames == 0:
                     logger.debug(f"[avspeech] zero-length buffer treated as EOF; sending sentinel")
                     loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
+                    done_event.set()
                     return
 
                 # Try int16ChannelData first (less common but cheaper).
@@ -389,9 +386,58 @@ class AVSpeechSynthesizerTTSService(TTSService):
             except Exception as e:
                 logger.exception(f"[avspeech] callback error: {e!r}")
                 loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
+                done_event.set()
 
-        logger.debug(f"[avspeech] starting writeUtterance for {len(text)}-char text with voice={self._voice_identifier or '(default)'}")
-        synth.writeUtterance_toBufferCallback_(utt, callback)
+        def _worker():
+            """Run synthesis + pump NSRunLoop on a worker thread.
+
+            AVSpeechSynthesizer.writeUtterance_toBufferCallback_ dispatches
+            its callback via the *current thread's* NSRunLoop. asyncio's
+            event loop doesn't pump NSRunLoop, so calling this directly
+            from the asyncio coroutine produces zero callbacks — the
+            synth queues work and waits forever for a runloop turn. Spin
+            up a dedicated thread, attach a runloop, and pump it.
+            """
+            try:
+                synth = AVFoundation.AVSpeechSynthesizer.new()
+                utt = AVFoundation.AVSpeechUtterance.speechUtteranceWithString_(text)
+                if self._voice_identifier:
+                    voice = AVFoundation.AVSpeechSynthesisVoice.voiceWithIdentifier_(
+                        self._voice_identifier,
+                    )
+                    if voice is not None:
+                        utt.setVoice_(voice)
+
+                logger.debug(
+                    f"[avspeech] starting writeUtterance for {len(text)}-char text "
+                    f"with voice={self._voice_identifier or '(default)'}"
+                )
+                synth.writeUtterance_toBufferCallback_(utt, callback)
+
+                # Pump this worker thread's runloop until the callback signals
+                # end-of-stream (via SENTINEL in the queue, which sets done_event).
+                nsloop = NSRunLoop.currentRunLoop()
+                hard_cap_s = 30.0
+                elapsed = 0.0
+                slice_ = 0.05
+                while not done_event.is_set() and elapsed < hard_cap_s:
+                    nsloop.runUntilDate_(
+                        NSDate.dateWithTimeIntervalSinceNow_(slice_),
+                    )
+                    elapsed += slice_
+
+                if not done_event.is_set():
+                    logger.warning(
+                        f"[avspeech] synthesis timed out after {hard_cap_s}s "
+                        f"({call_count['n']} callbacks, {call_count['bytes']} bytes)"
+                    )
+                    loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
+            except Exception as e:
+                logger.exception(f"[avspeech] worker thread error: {e!r}")
+                loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
+
+        thread = threading.Thread(target=_worker, name="avspeech-synth", daemon=True)
+        thread.start()
 
         chunks_yielded = 0
         while True:
