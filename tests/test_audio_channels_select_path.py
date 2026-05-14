@@ -73,3 +73,15 @@ def test_explicit_mic_channels_2_on_linux_calls_factory(monkeypatch):
 
     assert path.in_channels == 2
     assert path.aec is sentinel_pair
+
+
+def test_audio_path_has_transport_factory_field_with_default(monkeypatch):
+    """AudioPath gains a transport_factory field; default for non-VPIO
+    branches is LocalAudioTransport so existing Linux paths keep working."""
+    from pipecat.transports.local.audio import LocalAudioTransport
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    settings = Settings(_env_file=None)
+    path = select_audio_path(settings, aec_filter_factory=_stub_factory)
+
+    assert path.transport_factory is LocalAudioTransport

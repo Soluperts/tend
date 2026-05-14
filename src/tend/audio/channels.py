@@ -23,13 +23,15 @@ This module exposes:
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 import numpy as np
 from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
 from pipecat.frames.frames import Frame, InputAudioRawFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.transports.base_transport import BaseTransport, TransportParams
+from pipecat.transports.local.audio import LocalAudioTransport
 
 from tend.audio.aec import ReferenceBuffer
 from tend.config import Settings
@@ -78,6 +80,7 @@ class AudioPath:
     in_channels: int
     pre_vad_processors: tuple[FrameProcessor, ...]
     aec: AECPair | None
+    transport_factory: Callable[[TransportParams], BaseTransport] = LocalAudioTransport
 
 
 def _default_aec_filter_factory(settings: Settings) -> AECPair | None:
@@ -113,9 +116,11 @@ def select_audio_path(
             in_channels=2,
             pre_vad_processors=(StereoToMonoLeft(),),
             aec=aec_filter_factory(settings),
+            transport_factory=LocalAudioTransport,
         )
     return AudioPath(
         in_channels=1,
         pre_vad_processors=(),
         aec=aec_filter_factory(settings),
+        transport_factory=LocalAudioTransport,
     )
