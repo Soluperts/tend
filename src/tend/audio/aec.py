@@ -107,6 +107,11 @@ class SpeexAECFilter(BaseAudioFilter):
         self._aec = None
         self._pyaec_lib = None
         self._enabled = True
+        # Diagnostic: count calls + measure mic vs ref energy + residual to see
+        # if AEC is actually suppressing. Logged every ~50 calls (~1 s at
+        # 20 ms frames). Set _DIAG=False to silence.
+        self._call_count = 0
+        self._diag_every = 50
 
     async def start(self, sample_rate: int):
         from pyaec import Aec
@@ -160,7 +165,39 @@ class SpeexAECFilter(BaseAudioFilter):
         self._pyaec_lib.AecCancelEcho(
             self._aec._aec, mic_c, ref_c, out_c, frame_size,
         )
-        return bytes(out_c)
+        out_bytes = bytes(out_c)
+
+        # Diagnostic logging: surface mic / ref / residual energies so we can
+        # see whether speex is actually suppressing. RMS amplitude is more
+        # informative than peak; compute over a chunk of int16 samples.
+        self._call_count += 1
+        if self._call_count % self._diag_every == 0:
+            def _rms_i16(buf):
+                if not buf:
+                    return 0.0
+                a = array.array("h")
+                a.frombytes(buf)
+                # mean of squares → sqrt
+                acc = 0
+                for s in a:
+                    acc += s * s
+                return (acc / len(a)) ** 0.5
+            import math
+            mic_rms = _rms_i16(audio)
+            ref_rms = _rms_i16(ref)
+            out_rms = _rms_i16(out_bytes)
+            suppression_db = (
+                20.0 * math.log10(mic_rms / out_rms)
+                if mic_rms > 0 and out_rms > 0
+                else 0.0
+            )
+            logger.info(
+                f"[aec.speex] call={self._call_count} "
+                f"mic_rms={mic_rms:.0f} ref_rms={ref_rms:.0f} "
+                f"out_rms={out_rms:.0f} suppression={suppression_db:+.1f}dB"
+            )
+
+        return out_bytes
 
 
 def make_aec_filter(
