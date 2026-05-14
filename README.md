@@ -48,7 +48,14 @@ Install:
 
     pipx install tend
 
-Optional state-of-the-art AEC (otherwise tend uses pyaec/Speex by default):
+**AEC on macOS:** tend defaults to Apple's VoiceProcessingIO (`aec_engine = "vpio"`)
+for AEC + noise suppression + AGC — the same audio processing path FaceTime uses.
+This is the recommended setting for built-in MacBook mic+speaker.
+
+To override: set `aec_engine = "speex"` in `tend.toml` for the software AEC
+(useful if you have an external mic with no echo path).
+
+Optional WebRTC AEC3 (alternative software AEC):
 
     xcode-select --install
     brew install webrtc-audio-processing
@@ -213,7 +220,7 @@ docs/superpowers/plans/2026-05-05-tend-v1.md
 - **No audio in/out (Linux):** check `pactl list short sources` and `pactl list short sinks`. PipeWire must see your mic and speaker as the defaults.
 - **No audio in/out (macOS):** run `tend doctor`. If the mic permission check fails, open Settings → Privacy & Security → Microphone and enable Terminal (or iTerm, or whatever launched `tend`). Permission persists once granted.
 - **Bluetooth speaker latency:** expect 150–250 ms. Not fixable without switching to wired audio.
-- **Echo on macOS:** if you hear tend's own speech fed back, the AEC filter is not active. Run `tend doctor` — the AEC check will report which engine is in use. Install the `webrtc-audio-processing` extra for improved echo suppression.
+- **Echo on macOS:** if you hear tend's own speech fed back, the AEC filter is not active. Run `tend doctor` — the AEC check will report which engine is in use. By default, tend uses Apple's VoiceProcessingIO (VPIO) for OS-grade AEC; if VPIO is not available, fall back to `aec_engine = "speex"` in `tend.toml`.
 - **Cloud preflight failures:** the startup log prints the exact HTTP status and reason; fix the key or top up credits and restart.
 - **First run is slow:** model downloads. Subsequent runs start in seconds.
 - **systemd marks the service `failed` (Linux):** check `journalctl --user -u tend` for the reason. The 5-failures-in-5-minutes guard prevents thrashing-restart loops.

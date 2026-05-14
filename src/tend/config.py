@@ -105,7 +105,8 @@ class Settings(BaseSettings):
 
     # Audio path & AEC
     mic_channels: int | None = None         # platform default: 1 on macOS, 2 on Linux
-    aec_engine: str = "auto"                # auto | webrtc-aec3 | speex | off
+    aec_engine: str = "auto"                # auto | vpio | speex | webrtc-aec3 | off
+                                            # macOS auto → vpio; Linux auto → off
 
     # Wake / sleep
     openwakeword_model: str = "hey_jarvis"
