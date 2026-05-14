@@ -17,6 +17,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Callable
 
+import numpy as np
+
 from loguru import logger
 from pipecat.frames.frames import InputAudioRawFrame, OutputAudioRawFrame, StartFrame
 from pipecat.transports.base_input import BaseInputTransport
@@ -274,8 +276,6 @@ class AVAudioInputTransport(BaseInputTransport):
         push = self.push_audio_frame
         gain = self._POST_TAP_GAIN
 
-        import numpy as _np
-
         def tap_callback(in_buf, when):
             try:
                 pcm = _convert_to_int16_bytes(
@@ -288,8 +288,8 @@ class AVAudioInputTransport(BaseInputTransport):
                 return
             # Post-VPIO gain. Multiply with int32 headroom then clip back
             # to int16 to avoid wrap-around at peaks.
-            samples = _np.frombuffer(pcm, dtype=_np.int16).astype(_np.int32)
-            boosted = _np.clip(samples * gain, -32768, 32767).astype(_np.int16)
+            samples = np.frombuffer(pcm, dtype=np.int16).astype(np.int32)
+            boosted = np.clip(samples * gain, -32768, 32767).astype(np.int16)
             audio_frame = InputAudioRawFrame(
                 audio=boosted.tobytes(),
                 sample_rate=target_sr,
@@ -471,3 +471,7 @@ class AVAudioTransport(BaseTransport):
         if self._output is None:
             self._output = AVAudioOutputTransport(self._params, engine=self._engine)
         return self._output
+
+    async def cleanup(self):
+        await super().cleanup()
+        self._engine.stop()

@@ -516,3 +516,26 @@ def test_avaudio_transport_default_engine_factory_is_avaudioengine():
     t = AVAudioTransport(params)
     inp = t.input()
     assert isinstance(inp._engine, AVAudioEngine)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="AVFoundation requires macOS")
+@pytest.mark.asyncio
+async def test_avaudio_transport_cleanup_stops_engine():
+    """AVAudioTransport.cleanup() must stop the AVAudioEngine; otherwise
+    CoreAudio HAL device handles leak until process exit."""
+    from unittest.mock import MagicMock
+
+    from tend.audio.av_audio import AVAudioTransport, AVAudioTransportParams
+
+    fake_engine = MagicMock(name="engine")
+
+    params = AVAudioTransportParams(
+        audio_in_enabled=True, audio_out_enabled=True,
+        audio_in_sample_rate=16000, audio_in_channels=1,
+        audio_out_sample_rate=16000,
+    )
+    t = AVAudioTransport(params, engine_factory=lambda: fake_engine)
+
+    await t.cleanup()
+
+    fake_engine.stop.assert_called_once()
