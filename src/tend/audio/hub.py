@@ -32,7 +32,6 @@ from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransp
 from pipecat_subagents.agents import BaseAgent
 from pipecat_subagents.bus import AgentBus, BusBridgeProcessor
 
-from tend.audio.channels import StereoToMonoLeft
 from tend.audio.gates import OpenWakeWordGate, SleepPhraseGate
 from tend.audio.logging import InputLatencyLogger, OutputLatencyLogger
 from tend.config import Settings
@@ -126,12 +125,18 @@ class Hub(BaseAgent):
         )
 
     async def build_pipeline(self) -> Pipeline:
+        from tend.audio.channels import select_audio_path
+        from tend.audio.output_tap import OutputAudioCapture
+
+        path = select_audio_path(self._settings)
+
         transport = LocalAudioTransport(
             LocalAudioTransportParams(
                 audio_in_enabled=True,
                 audio_out_enabled=True,
                 audio_in_sample_rate=self._settings.sample_rate,
-                audio_in_channels=2,  # XVF3800: L=AEC-processed, R=echo ref
+                audio_in_channels=path.in_channels,
+                audio_in_filter=path.aec_filter,
                 audio_out_sample_rate=self._tts_sample_rate,
             )
         )
@@ -148,9 +153,13 @@ class Hub(BaseAgent):
             name=f"{self.name}::voice-bridge",
         )
 
+        output_tap = []
+        if path.aec_filter is not None and hasattr(path.aec_filter, "_tend_reference"):
+            output_tap = [OutputAudioCapture(reference=path.aec_filter._tend_reference)]
+
         return Pipeline([
             transport.input(),
-            StereoToMonoLeft(),
+            *path.pre_vad_processors,
             VADProcessor(vad_analyzer=SileroVADAnalyzer()),
             OpenWakeWordGate(
                 model_name=self._settings.openwakeword_model,
@@ -171,6 +180,7 @@ class Hub(BaseAgent):
             bridge,
             self._tts,
             OutputLatencyLogger(),
+            *output_tap,
             transport.output(),
             aggregators.assistant(),
         ])

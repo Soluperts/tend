@@ -61,16 +61,37 @@ class AudioPath:
     aec_filter: Optional[BaseAudioFilter]
 
 
+def _default_aec_filter_factory(settings: Settings) -> Optional[BaseAudioFilter]:
+    """Build the AEC filter using the production engine resolver.
+
+    Production callers don't pass this explicitly — `select_audio_path`
+    defaults to it. Tests pass a stub factory instead so they don't
+    pull in pyaec/webrtc.
+    """
+    from tend.audio.aec import ReferenceBuffer, make_aec_filter, resolve_aec_engine
+
+    engine = resolve_aec_engine(settings)
+    if engine == "off":
+        return None
+    # Each Hub gets its own buffer; OutputAudioCapture writes into it.
+    reference = ReferenceBuffer()
+    f = make_aec_filter(engine, reference=reference)
+    # Attach the buffer so the Hub can find it to construct OutputAudioCapture.
+    f._tend_reference = reference  # type: ignore[attr-defined]
+    return f
+
+
 def select_audio_path(
     settings: Settings,
     *,
-    aec_filter_factory: Callable[[Settings], Optional[BaseAudioFilter]],
+    aec_filter_factory: Callable[[Settings], Optional[BaseAudioFilter]] = _default_aec_filter_factory,
 ) -> AudioPath:
     """Return the audio-path tuple appropriate for this platform.
 
     `aec_filter_factory` is injected so this function can be unit-tested
-    without pulling in the AEC engine; production callers pass
-    `tend.audio.aec.make_aec_filter`.
+    without pulling in the AEC engine; production callers don't pass it
+    (the default wires up the real AEC engine). Tests pass a stub factory
+    instead so they don't pull in pyaec/webrtc.
     """
     explicit = settings.mic_channels
     if explicit == 2 or (explicit is None and sys.platform != "darwin"):
