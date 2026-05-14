@@ -28,7 +28,7 @@ class ReferenceBuffer:
     fewer than `n` bytes have been written.
     """
 
-    def __init__(self, capacity_bytes: int = 32_000):  # 1 s at 16 kHz mono
+    def __init__(self, capacity_bytes: int = 32_000):  # 1 s at 16 kHz mono 16-bit PCM
         self._buf = bytearray(capacity_bytes)
         self._capacity = capacity_bytes
         self._size = 0      # number of bytes written, capped at capacity
@@ -37,11 +37,24 @@ class ReferenceBuffer:
 
     def write(self, data: bytes) -> None:
         with self._lock:
-            for b in data:
-                self._buf[self._head] = b
-                self._head = (self._head + 1) % self._capacity
-                if self._size < self._capacity:
-                    self._size += 1
+            n = len(data)
+            if n == 0:
+                return
+            if n >= self._capacity:
+                # Writing more than the buffer holds — keep only the last `capacity` bytes.
+                self._buf[:] = data[-self._capacity:]
+                self._head = 0
+                self._size = self._capacity
+                return
+            end = self._head + n
+            if end <= self._capacity:
+                self._buf[self._head:end] = data
+            else:
+                first = self._capacity - self._head
+                self._buf[self._head:] = data[:first]
+                self._buf[:n - first] = data[first:]
+            self._head = (self._head + n) % self._capacity
+            self._size = min(self._size + n, self._capacity)
 
     def read(self, n: int) -> bytes:
         """Return the n most-recent bytes, padding silence at the front."""
@@ -75,6 +88,10 @@ def resolve_aec_engine(settings) -> str:
     """Resolve `[audio] aec_engine` to a concrete engine name.
 
     Returns one of: "off", "speex", "webrtc-aec3".
+
+    Note: `settings` is intentionally untyped to keep this module free of
+    a `tend.config.Settings` import, which would pull pydantic-settings
+    into every AEC test. Any object with an `aec_engine` attribute works.
     """
     engine = (settings.aec_engine or "auto").lower()
 
@@ -88,4 +105,9 @@ def resolve_aec_engine(settings) -> str:
     # auto resolution
     if sys.platform == "darwin":
         return "webrtc-aec3" if _webrtc_importable() else "speex"
+    logger.info(
+        "aec_engine=auto on %s resolved to off — assumes hardware AEC "
+        "(e.g. XVF3800). Set [audio] aec_engine=speex to override.",
+        sys.platform,
+    )
     return "off"

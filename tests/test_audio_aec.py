@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import sys
 
-import pytest
-
 from tend.audio.aec import ReferenceBuffer, resolve_aec_engine
 from tend.config import Settings
 
@@ -39,20 +37,17 @@ def test_reference_buffer_partial_fill_pads_with_silence():
     assert out == b"\x00\x00" + b"X" * 3
 
 
-def test_resolve_aec_engine_off_returns_off(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "darwin")
+def test_resolve_aec_engine_off_returns_off():
     settings = Settings(_env_file=None, aec_engine="off")
     assert resolve_aec_engine(settings) == "off"
 
 
-def test_resolve_aec_engine_explicit_webrtc(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "darwin")
+def test_resolve_aec_engine_explicit_webrtc():
     settings = Settings(_env_file=None, aec_engine="webrtc-aec3")
     assert resolve_aec_engine(settings) == "webrtc-aec3"
 
 
-def test_resolve_aec_engine_explicit_speex(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "darwin")
+def test_resolve_aec_engine_explicit_speex():
     settings = Settings(_env_file=None, aec_engine="speex")
     assert resolve_aec_engine(settings) == "speex"
 
