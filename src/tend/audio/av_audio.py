@@ -98,6 +98,9 @@ def _convert_to_int16_bytes(
     target_format = converter.outputFormat()
     in_frames = in_buf.frameLength()
     native_sr = in_buf.format().sampleRate()
+    # Generous output capacity: in_frames * (target/native) + 64 frames
+    # slack for the resampler's lookahead window. The +1 minimum guards
+    # against degenerate empty inputs.
     out_cap = max(int(in_frames * target_sample_rate / native_sr) + 64, 1)
     out_buf = AVAudioPCMBuffer.alloc().initWithPCMFormat_frameCapacity_(
         target_format, out_cap,
@@ -108,9 +111,9 @@ def _convert_to_int16_bytes(
     def supply_input(num_packets, status_ptr):
         # AVAudioConverterInputStatus_HaveData=0, NoDataNow=1, EndOfStream=2
         if supplied["done"]:
-            return (None, 1)
+            return (None, 1)  # NoDataNow — flush whatever the converter has
         supplied["done"] = True
-        return (in_buf, 0)
+        return (in_buf, 0)  # HaveData
 
     status, err = converter.convertToBuffer_error_withInputFromBlock_(
         out_buf, None, supply_input,
@@ -171,10 +174,11 @@ def _convert_int16_buffer_to_float32_buffer(
     supplied = {"done": False}
 
     def supply_input(num_packets, status_ptr):
+        # AVAudioConverterInputStatus_HaveData=0, NoDataNow=1, EndOfStream=2
         if supplied["done"]:
-            return (None, 1)
+            return (None, 1)  # NoDataNow — flush whatever the converter has
         supplied["done"] = True
-        return (src, 0)
+        return (src, 0)  # HaveData
 
     status, err = converter.convertToBuffer_error_withInputFromBlock_(
         out, None, supply_input,
