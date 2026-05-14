@@ -30,14 +30,28 @@
 
 ---
 
-## Task 1: Standalone VPIO PoC script
+## Task 1: Standalone VPIO PoC script — DONE (commit `223ac9d`)
 
-**Why first:** De-risks the whole plan. Validates PyObjC bindings, format conversion, asyncio bridge, output scheduling, and suppression measurement on the user's macOS 26 hardware in ~120 LOC of standalone code. If something is wrong with the foundation, we find out here before any pipecat wiring.
+**Status:** SHIPPED. `scripts/audio_check_vpio.py` exists and passes on user's MacBook.
+
+**Measured results:**
+- 1 kHz echo suppression: +77 dB (well above the ≥30 dB threshold)
+- Speech preserved: peak 262, RMS 51 — matches PyAudio raw baseline (peak 239)
+
+**Critical findings from the PoC (folded into Tasks 4-9 below):**
+1. Input node under VPIO exposes a **9-channel** aggregate (mic + speaker refs). `AVAudioConverter` defaults to `channelMap=[-1]` (drops output → silent buffers); **must set `channelMap=[0]`** to take the mic.
+2. **player → mainMixer breaks engine init** under VPIO (err -10875). Must connect **player → outputNode directly**.
+3. **Output buffer format is 2ch 48 kHz Float32 deinterleaved** (output node's natural format under VPIO), not 16 kHz Int16. The output transport needs its own `AVAudioConverter` (int16 → Float32 + resample + channel-double).
+4. **VPIO noise-gates user speech ~12 dB** at desk distance. Apply **post-tap +12 dB gain** to recover STT-usable levels. Residual echo stays at -78 dB after boost (far below STT floor).
+
+**Why first:** De-risks the whole plan. Validates PyObjC bindings, format conversion, asyncio bridge, output scheduling, and suppression measurement on the user's macOS 26 hardware in ~250 LOC of standalone code. The four findings above were not visible in Apple's docs and only surfaced empirically — proceeding to implementation without this step would have produced silent or non-starting code.
 
 **Files:**
-- Create: `scripts/audio_check_vpio.py`
+- Created: `scripts/audio_check_vpio.py` (commit `223ac9d`)
 
-- [ ] **Step 1: Create the PoC script**
+- [x] **Step 1: Create the PoC script**
+
+The shipped script is the source of truth for the engine-level wiring; tasks 5-9 below quote the same patterns. Original step-1 sketch was replaced by the validated version. The full script lives at `scripts/audio_check_vpio.py` — skim it before starting Task 4.
 
 ```python
 """Standalone AVAudioEngine + VoiceProcessingIO sanity check.
@@ -577,8 +591,14 @@ Append to `src/tend/audio/av_audio.py`:
 def _make_input_converter(
     native_format: "AVAudioFormat", target_sample_rate: int,
 ) -> "AVAudioConverter":
-    """Build an AVAudioConverter from the input node's native format to
-    16 kHz int16 mono (or whatever target_sample_rate the caller picks)."""
+    """Build an AVAudioConverter from the input node's native format
+    (typically 9ch Float32 48 kHz under VPIO) to 16 kHz int16 mono.
+
+    Critical: the converter's default channelMap on a many-to-one mapping
+    is [-1] (drop output), which produces zero-valued buffers. We must
+    explicitly set channelMap=[0] to take channel 0 from the input,
+    which under VPIO is the post-VPIO mic signal. PoC commit 223ac9d
+    proved this is required."""
     from AVFoundation import (
         AVAudioConverter,
         AVAudioFormat,
@@ -588,7 +608,9 @@ def _make_input_converter(
     target = AVAudioFormat.alloc().initWithCommonFormat_sampleRate_channels_interleaved_(
         AVAudioPCMFormatInt16, float(target_sample_rate), 1, False,
     )
-    return AVAudioConverter.alloc().initFromFormat_toFormat_(native_format, target)
+    conv = AVAudioConverter.alloc().initFromFormat_toFormat_(native_format, target)
+    conv.setChannelMap_([0])
+    return conv
 
 
 def _convert_to_int16_bytes(
@@ -645,11 +667,165 @@ pytest tests/test_audio_av_audio.py::test_converter_downsamples_float32_to_int16
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Write the failing test for channelMap default check**
+
+Append:
+
+```python
+@pytest.mark.skipif(sys.platform != "darwin", reason="AVFoundation requires macOS")
+def test_input_converter_sets_channel_map_to_zero():
+    """The converter must explicitly take channel 0 from the input.
+    Without this, AVAudioConverter's default channelMap on a 9→1
+    mapping is [-1] which drops the output to zero — silent capture."""
+    from AVFoundation import AVAudioFormat, AVAudioPCMFormatFloat32
+    from tend.audio.av_audio import _make_input_converter
+
+    native = AVAudioFormat.alloc().initWithCommonFormat_sampleRate_channels_interleaved_(
+        AVAudioPCMFormatFloat32, 48000.0, 9, False,
+    )
+    conv = _make_input_converter(native, target_sample_rate=16000)
+    cm = conv.channelMap()
+    assert list(cm) == [0]
+```
+
+- [ ] **Step 6: Run to verify pass**
+
+```bash
+pytest tests/test_audio_av_audio.py::test_input_converter_sets_channel_map_to_zero -v
+```
+
+Expected: PASS — Step 3's implementation already calls `conv.setChannelMap_([0])`.
+
+- [ ] **Step 7: Write the failing test for the output converter**
+
+```python
+@pytest.mark.skipif(sys.platform != "darwin", reason="AVFoundation requires macOS")
+def test_output_converter_int16_mono_to_float32_stereo_48k():
+    """Output side: convert 16 kHz int16 mono → 48 kHz Float32 stereo
+    (the format the output node demands under VPIO)."""
+    import math, struct
+    from AVFoundation import AVAudioFormat, AVAudioPCMFormatFloat32
+
+    from tend.audio.av_audio import (
+        _int16_pcm_buffer,
+        _make_output_converter,
+        _convert_int16_buffer_to_float32_buffer,
+    )
+
+    # Source: 320 frames of 16 kHz int16 mono (20 ms of a sine)
+    pcm = struct.pack(
+        "<320h",
+        *(int(0.3 * 32767 * math.sin(2 * math.pi * 1000 * i / 16000)) for i in range(320)),
+    )
+    src = _int16_pcm_buffer(pcm, sample_rate=16000)
+
+    target = AVAudioFormat.alloc().initWithCommonFormat_sampleRate_channels_interleaved_(
+        AVAudioPCMFormatFloat32, 48000.0, 2, False,
+    )
+    converter = _make_output_converter(source_sample_rate=16000, target_format=target)
+    out = _convert_int16_buffer_to_float32_buffer(converter, src, target_format=target)
+
+    # 320 frames @ 16k → 960 frames @ 48k (±resampler windowing)
+    assert 850 <= out.frameLength() <= 1050
+    assert out.format().channelCount() == 2
+    # Both channels populated (mono → stereo duplicate)
+    fc = out.floatChannelData()
+    ch0 = bytes(fc[0].as_buffer(out.frameLength()))
+    ch1 = bytes(fc[1].as_buffer(out.frameLength()))
+    # First sample non-zero (sine starts at 0 but jumps quickly)
+    assert any(b != 0 for b in ch0[:32])
+```
+
+- [ ] **Step 8: Run to verify failure**
+
+```bash
+pytest tests/test_audio_av_audio.py::test_output_converter_int16_mono_to_float32_stereo_48k -v
+```
+
+Expected: FAIL with `ImportError: cannot import name '_make_output_converter'`.
+
+- [ ] **Step 9: Implement the output converter helpers**
+
+Append to `src/tend/audio/av_audio.py`:
+
+```python
+def _make_output_converter(
+    source_sample_rate: int, target_format: "AVAudioFormat",
+) -> "AVAudioConverter":
+    """Build an AVAudioConverter from int16 mono PCM at source_sample_rate
+    to whatever target_format the output node requires.
+
+    On built-in MacBook hardware with VPIO active, target_format is
+    typically 2ch Float32 deinterleaved at 48 kHz — the output node's
+    natural format. The converter handles channel-doubling (mono → stereo
+    duplicate; default channelMap [0, 0]) and resampling in one pass.
+    """
+    from AVFoundation import (
+        AVAudioConverter,
+        AVAudioFormat,
+        AVAudioPCMFormatInt16,
+    )
+
+    source = AVAudioFormat.alloc().initWithCommonFormat_sampleRate_channels_interleaved_(
+        AVAudioPCMFormatInt16, float(source_sample_rate), 1, False,
+    )
+    conv = AVAudioConverter.alloc().initFromFormat_toFormat_(source, target_format)
+    # 1→N channel default would otherwise drop unmapped target channels;
+    # explicitly duplicate the mono source across every target channel.
+    target_channels = target_format.channelCount()
+    conv.setChannelMap_([0] * target_channels)
+    return conv
+
+
+def _convert_int16_buffer_to_float32_buffer(
+    converter: "AVAudioConverter",
+    src: "AVAudioPCMBuffer",
+    *,
+    target_format: "AVAudioFormat",
+) -> "AVAudioPCMBuffer":
+    """One-shot convert an int16 source buffer to the target Float32 format.
+
+    Output capacity is sized for resampling overhead (target/source rate
+    ratio plus 64 frames slack).
+    """
+    from AVFoundation import AVAudioPCMBuffer
+
+    src_frames = src.frameLength()
+    src_sr = src.format().sampleRate()
+    target_sr = target_format.sampleRate()
+    out_cap = max(int(src_frames * target_sr / src_sr) + 64, 1)
+    out = AVAudioPCMBuffer.alloc().initWithPCMFormat_frameCapacity_(target_format, out_cap)
+
+    supplied = {"done": False}
+
+    def supply_input(num_packets, status_ptr):
+        if supplied["done"]:
+            return (None, 1)  # NoDataNow
+        supplied["done"] = True
+        return (src, 0)  # HaveData
+
+    status, err = converter.convertToBuffer_error_withInputFromBlock_(
+        out, None, supply_input,
+    )
+    if status not in (0, 1):
+        from loguru import logger
+        logger.error(f"output AVAudioConverter status={status} err={err}")
+    return out
+```
+
+- [ ] **Step 10: Run to verify pass**
+
+```bash
+pytest tests/test_audio_av_audio.py -v
+```
+
+Expected: all conversion tests PASS.
+
+- [ ] **Step 11: Commit**
 
 ```bash
 git add src/tend/audio/av_audio.py tests/test_audio_av_audio.py
-git commit -m "feat(audio): native-format → 16 kHz int16 mono converter helpers"
+git commit -m "feat(audio): input + output AVAudioConverter helpers with explicit channelMap"
 ```
 
 ---
@@ -770,6 +946,12 @@ class AVAudioInputTransport(BaseInputTransport):
         self._target_sample_rate = 0
         self._tap_installed = False
 
+    # Linear factor for +12 dB post-VPIO gain. VPIO noise-gates user
+    # speech ~12 dB at desk distance (validated in PoC commit 223ac9d).
+    # Residual echo stays at -78 dB after this boost — well below STT
+    # thresholds.
+    _POST_TAP_GAIN = 4.0   # 10 ** (12.0 / 20.0)
+
     async def start(self, frame: StartFrame):
         await super().start(frame)
         if self._tap_installed:
@@ -795,6 +977,10 @@ class AVAudioInputTransport(BaseInputTransport):
         )
 
         native_format = self._input_node.outputFormatForBus_(0)
+        # Under VPIO this is typically 9 channels (mic + speaker refs) at
+        # 48 kHz Float32 deinterleaved. The converter takes channel 0 only
+        # (the post-VPIO mic) via the explicit channelMap=[0] set in
+        # _make_input_converter.
         logger.info(
             f"[av_audio] native input format: "
             f"sr={native_format.sampleRate()} ch={native_format.channelCount()}"
@@ -807,6 +993,9 @@ class AVAudioInputTransport(BaseInputTransport):
         target_sr = self._target_sample_rate
         converter = self._converter
         push = self.push_audio_frame
+        gain = self._POST_TAP_GAIN
+
+        import numpy as _np
 
         def tap_callback(in_buf, when):
             try:
@@ -818,16 +1007,21 @@ class AVAudioInputTransport(BaseInputTransport):
                 return
             if not pcm:
                 return
-            frame = InputAudioRawFrame(
-                audio=pcm,
+            # Post-VPIO gain. Multiply with int32 head-room then clip back
+            # to int16 to avoid wrap-around at peaks.
+            samples = _np.frombuffer(pcm, dtype=_np.int16).astype(_np.int32)
+            boosted = _np.clip(samples * gain, -32768, 32767).astype(_np.int16)
+            audio_frame = InputAudioRawFrame(
+                audio=boosted.tobytes(),
                 sample_rate=target_sr,
                 num_channels=1,
             )
-            asyncio.run_coroutine_threadsafe(push(frame), loop)
+            asyncio.run_coroutine_threadsafe(push(audio_frame), loop)
 
-        # Tap at native format — installing at a different format than the
-        # bus produces is unreliable per Apple's docs. Convert per-buffer
-        # in the callback instead.
+        # Tap at NATIVE 9-channel Float32 48 kHz format. The converter
+        # downmixes + resamples + post-tap gain runs in tap_callback.
+        # Installing at a different format than the bus is unreliable per
+        # Apple's docs and produced silent buffers in PoC testing.
         self._input_node.installTapOnBus_bufferSize_format_block_(
             0, 1024, native_format, tap_callback,
         )
@@ -890,14 +1084,16 @@ async def test_input_transport_tap_callback_pushes_frame(monkeypatch):
     fake_engine.inputNode.return_value = fake_input
 
     # Stub the conversion path so we don't need real AVFoundation buffers.
-    expected_pcm = struct.pack("<5h", 1, 2, 3, 4, 5)
+    # Input PCM values are pre-gain; we expect output to be 4x (≈ +12 dB).
+    raw_pcm = struct.pack("<5h", 100, 200, 300, 400, 500)
+    expected_after_gain = struct.pack("<5h", 400, 800, 1200, 1600, 2000)
     monkeypatch.setattr(
         "tend.audio.av_audio._make_input_converter",
         lambda *a, **kw: MagicMock(),
     )
     monkeypatch.setattr(
         "tend.audio.av_audio._convert_to_int16_bytes",
-        lambda *a, **kw: expected_pcm,
+        lambda *a, **kw: raw_pcm,
     )
 
     params = AVAudioTransportParams(
@@ -933,7 +1129,7 @@ async def test_input_transport_tap_callback_pushes_frame(monkeypatch):
 
     assert len(pushed_frames) == 1
     assert isinstance(pushed_frames[0], InputAudioRawFrame)
-    assert pushed_frames[0].audio == expected_pcm
+    assert pushed_frames[0].audio == expected_after_gain  # +12 dB applied
     assert pushed_frames[0].sample_rate == 16000
     assert pushed_frames[0].num_channels == 1
 ```
@@ -1052,7 +1248,11 @@ The output transport attaches an `AVAudioPlayerNode` to the engine's `mainMixerN
 ```python
 @pytest.mark.skipif(sys.platform != "darwin", reason="AVFoundation requires macOS")
 @pytest.mark.asyncio
-async def test_output_transport_start_attaches_player(monkeypatch):
+async def test_output_transport_start_attaches_player_to_output_node(monkeypatch):
+    """Player must connect to OUTPUT NODE directly, NOT mainMixerNode.
+    Under VPIO, mainMixer's 44.1 kHz default conflicts with outputNode's
+    48 kHz and engine.start() fails with err=-10875. PoC commit 223ac9d
+    validated the direct-connection fix."""
     from unittest.mock import MagicMock
 
     from pipecat.frames.frames import StartFrame
@@ -1061,12 +1261,19 @@ async def test_output_transport_start_attaches_player(monkeypatch):
     fake_engine = MagicMock()
     fake_engine.startAndReturnError_.return_value = (True, None)
     fake_player = MagicMock(name="player")
-    fake_engine.mainMixerNode.return_value = MagicMock(name="mixer")
+    fake_output_node = MagicMock(name="output_node")
+    fake_output_format = MagicMock(
+        name="output_format", channelCount=lambda: 2, sampleRate=lambda: 48000.0,
+    )
+    fake_output_node.inputFormatForBus_.return_value = fake_output_format
+    fake_engine.outputNode.return_value = fake_output_node
 
-    # Inject the player class as a factory so the test doesn't need real AVFoundation.
     monkeypatch.setattr(
-        "tend.audio.av_audio._make_player_node",
-        lambda: fake_player,
+        "tend.audio.av_audio._make_player_node", lambda: fake_player,
+    )
+    monkeypatch.setattr(
+        "tend.audio.av_audio._make_output_converter",
+        lambda *a, **kw: MagicMock(),
     )
 
     params = AVAudioTransportParams(
@@ -1078,14 +1285,19 @@ async def test_output_transport_start_attaches_player(monkeypatch):
     await out.start(StartFrame(audio_in_sample_rate=16000, audio_out_sample_rate=16000))
 
     fake_engine.attachNode_.assert_called_once_with(fake_player)
-    fake_engine.connect_to_format_.assert_called_once()
+    # KEY: connect target is outputNode, not mainMixerNode.
+    connect_call = fake_engine.connect_to_format_.call_args
+    assert connect_call[0][0] is fake_player
+    assert connect_call[0][1] is fake_output_node
+    # The mainMixerNode must NOT be referenced at all in the connect chain.
+    assert not fake_engine.mainMixerNode.called
     fake_player.play.assert_called_once()
 ```
 
 - [ ] **Step 2: Run to verify failure**
 
 ```bash
-pytest tests/test_audio_av_audio.py::test_output_transport_start_attaches_player -v
+pytest tests/test_audio_av_audio.py::test_output_transport_start_attaches_player_to_output_node -v
 ```
 
 Expected: FAIL with `ImportError: cannot import name 'AVAudioOutputTransport'`.
@@ -1101,19 +1313,19 @@ def _make_player_node() -> "AVAudioPlayerNode":
     return AVAudioPlayerNode.alloc().init()
 
 
-def _make_output_format(sample_rate: int) -> "AVAudioFormat":
-    from AVFoundation import AVAudioFormat, AVAudioPCMFormatInt16
-    return AVAudioFormat.alloc().initWithCommonFormat_sampleRate_channels_interleaved_(
-        AVAudioPCMFormatInt16, float(sample_rate), 1, False,
-    )
-
-
 class AVAudioOutputTransport(BaseOutputTransport):
-    """Plays audio via AVAudioPlayerNode → mainMixer → outputNode.
+    """Plays audio via AVAudioPlayerNode → outputNode (direct, no mixer).
 
-    write_audio_frame schedules one buffer at a time and awaits its
-    .dataPlayedBack completion — this gives playback-rate-paced writes,
-    matching the semantics pipecat's TTSStopFrame interruption assumes.
+    Under VPIO, the mainMixerNode's default 44.1 kHz format conflicts
+    with the outputNode's 48 kHz, and engine.start() fails with
+    err=-10875. So the player connects directly to outputNode at
+    outputNode.inputFormat(forBus: 0) (typically 2ch Float32 48 kHz
+    deinterleaved on built-in MacBook speakers).
+
+    write_audio_frame converts incoming int16 mono PCM to the output
+    node's format via _convert_int16_buffer_to_float32_buffer, then
+    schedules with .dataPlayedBack completion type for realtime-paced
+    backpressure.
     """
 
     _params: AVAudioTransportParams
@@ -1127,6 +1339,8 @@ class AVAudioOutputTransport(BaseOutputTransport):
         super().__init__(params)
         self._engine = engine
         self._player: "AVAudioPlayerNode | None" = None
+        self._output_format: "AVAudioFormat | None" = None
+        self._converter: "AVAudioConverter | None" = None
         self._sample_rate = 0
         self._started = False
 
@@ -1138,12 +1352,29 @@ class AVAudioOutputTransport(BaseOutputTransport):
         self._sample_rate = (
             self._params.audio_out_sample_rate or frame.audio_out_sample_rate
         )
+        output_node = self._engine.outputNode()
+        # The output node's input format is what the speaker hardware
+        # demands under VPIO — typically 2ch 48 kHz Float32 deinterleaved.
+        self._output_format = output_node.inputFormatForBus_(0)
+        logger.info(
+            f"[av_audio] output node format: "
+            f"sr={self._output_format.sampleRate()} "
+            f"ch={self._output_format.channelCount()}"
+        )
+
         self._player = _make_player_node()
         self._engine.attachNode_(self._player)
-        out_format = _make_output_format(self._sample_rate)
+        # DIRECT connect to outputNode, skipping mainMixerNode (its 44.1 kHz
+        # default conflicts with VPIO's 48 kHz output).
         self._engine.connect_to_format_(
-            self._player, self._engine.mainMixerNode(), out_format,
+            self._player, output_node, self._output_format,
         )
+
+        self._converter = _make_output_converter(
+            source_sample_rate=self._sample_rate,
+            target_format=self._output_format,
+        )
+
         # Idempotent — input transport may already have started the engine.
         started, err = self._engine.startAndReturnError_(None)
         if not started:
@@ -1207,11 +1438,24 @@ async def test_output_transport_write_frame_blocks_until_completion(monkeypatch)
     )
 
     monkeypatch.setattr("tend.audio.av_audio._make_player_node", lambda: fake_player)
-    # Bypass real AVAudioPCMBuffer construction.
+    # Bypass real AVAudioPCMBuffer + converter construction.
     monkeypatch.setattr(
         "tend.audio.av_audio._int16_pcm_buffer",
         lambda pcm, sample_rate: MagicMock(),
     )
+    monkeypatch.setattr(
+        "tend.audio.av_audio._make_output_converter",
+        lambda *a, **kw: MagicMock(),
+    )
+    monkeypatch.setattr(
+        "tend.audio.av_audio._convert_int16_buffer_to_float32_buffer",
+        lambda *a, **kw: MagicMock(name="float32_buf"),
+    )
+    fake_output_node = MagicMock()
+    fake_output_node.inputFormatForBus_.return_value = MagicMock(
+        channelCount=lambda: 2, sampleRate=lambda: 48000.0,
+    )
+    fake_engine.outputNode.return_value = fake_output_node
 
     params = AVAudioTransportParams(
         audio_in_enabled=False, audio_out_enabled=True,
@@ -1249,12 +1493,21 @@ Append to the `AVAudioOutputTransport` class:
 
 ```python
     async def write_audio_frame(self, frame: OutputAudioRawFrame) -> bool:
-        if self._player is None:
+        if self._player is None or self._converter is None or self._output_format is None:
             return False
 
-        from AVFoundation import AVAudioPlayerNodeCompletionDataPlayedBack
+        # AVAudioPlayerNodeCompletionDataPlayedBack == 0 in CoreAudio headers.
+        # Some PyObjC versions don't export the constant at AVFoundation
+        # top level; use the literal.
+        COMPLETION_DATA_PLAYED_BACK = 0
 
-        buf = _int16_pcm_buffer(frame.audio, sample_rate=self._sample_rate)
+        # Convert int16 mono @ tts_sample_rate → Float32 @ output node's
+        # natural format (typically 2ch 48 kHz under VPIO).
+        src = _int16_pcm_buffer(frame.audio, sample_rate=self._sample_rate)
+        out_buf = _convert_int16_buffer_to_float32_buffer(
+            self._converter, src, target_format=self._output_format,
+        )
+
         loop = self.get_event_loop()
         done = asyncio.Event()
 
@@ -1263,7 +1516,7 @@ Append to the `AVAudioOutputTransport` class:
             loop.call_soon_threadsafe(done.set)
 
         self._player.scheduleBuffer_completionCallbackType_completionHandler_(
-            buf, AVAudioPlayerNodeCompletionDataPlayedBack, completion,
+            out_buf, COMPLETION_DATA_PLAYED_BACK, completion,
         )
         await done.wait()
         return True
