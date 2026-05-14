@@ -471,3 +471,48 @@ async def test_output_transport_cleanup_stops_player(monkeypatch):
     await out.cleanup()
 
     fake_player.stop.assert_called_once()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="AVFoundation requires macOS")
+def test_avaudio_transport_lazy_input_output_share_engine():
+    from unittest.mock import MagicMock
+
+    from tend.audio.av_audio import AVAudioTransport, AVAudioTransportParams
+
+    fake_engine = MagicMock(name="shared_engine")
+
+    params = AVAudioTransportParams(
+        audio_in_enabled=True, audio_out_enabled=True,
+        audio_in_sample_rate=16000, audio_in_channels=1,
+        audio_out_sample_rate=16000,
+    )
+    t = AVAudioTransport(params, engine_factory=lambda: fake_engine)
+
+    inp1 = t.input()
+    inp2 = t.input()
+    out1 = t.output()
+    out2 = t.output()
+
+    # Cached per call
+    assert inp1 is inp2
+    assert out1 is out2
+    # Share the same engine
+    assert inp1._engine is fake_engine
+    assert out1._engine is fake_engine
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="AVFoundation requires macOS")
+def test_avaudio_transport_default_engine_factory_is_avaudioengine():
+    """Smoke: with no engine_factory override, AVAudioTransport constructs
+    a real AVAudioEngine instance."""
+    from AVFoundation import AVAudioEngine
+    from tend.audio.av_audio import AVAudioTransport, AVAudioTransportParams
+
+    params = AVAudioTransportParams(
+        audio_in_enabled=True, audio_out_enabled=True,
+        audio_in_sample_rate=16000, audio_in_channels=1,
+        audio_out_sample_rate=16000,
+    )
+    t = AVAudioTransport(params)
+    inp = t.input()
+    assert isinstance(inp._engine, AVAudioEngine)

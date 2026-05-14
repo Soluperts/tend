@@ -15,13 +15,13 @@ LocalAudioTransportParams — that's why no device fields are added in v1.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from loguru import logger
 from pipecat.frames.frames import InputAudioRawFrame, OutputAudioRawFrame, StartFrame
 from pipecat.transports.base_input import BaseInputTransport
 from pipecat.transports.base_output import BaseOutputTransport
-from pipecat.transports.base_transport import TransportParams
+from pipecat.transports.base_transport import BaseTransport, TransportParams
 
 if TYPE_CHECKING:
     from AVFoundation import (
@@ -435,3 +435,39 @@ class AVAudioOutputTransport(BaseOutputTransport):
         )
         await done.wait()
         return True
+
+
+def _default_engine_factory() -> "AVAudioEngine":
+    from AVFoundation import AVAudioEngine
+    return AVAudioEngine.alloc().init()
+
+
+class AVAudioTransport(BaseTransport):
+    """Complete macOS AVAudioEngine transport with VPIO-enabled input.
+
+    Owns one AVAudioEngine, lazy-constructs input/output subtransports
+    that share the engine. Mirrors pipecat's LocalAudioTransport API
+    so it can be a drop-in replacement on macOS.
+    """
+
+    def __init__(
+        self,
+        params: AVAudioTransportParams,
+        *,
+        engine_factory: Callable[[], "AVAudioEngine"] = _default_engine_factory,
+    ):
+        super().__init__()
+        self._params = params
+        self._engine = engine_factory()
+        self._input: AVAudioInputTransport | None = None
+        self._output: AVAudioOutputTransport | None = None
+
+    def input(self) -> AVAudioInputTransport:
+        if self._input is None:
+            self._input = AVAudioInputTransport(self._params, engine=self._engine)
+        return self._input
+
+    def output(self) -> AVAudioOutputTransport:
+        if self._output is None:
+            self._output = AVAudioOutputTransport(self._params, engine=self._engine)
+        return self._output
