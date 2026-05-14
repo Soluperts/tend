@@ -110,8 +110,15 @@ def _ask_tts_macos(noninteractive: bool) -> str:
 
 
 def _persist_tts_provider(provider: str, avspeech_voice: str = "") -> None:
-    """Write the chosen TTS provider to ~/.tend/tend.toml."""
+    """Write the chosen TTS provider to ~/.tend/tend.toml as top-level keys.
+
+    Settings.tts_provider and Settings.avspeech_voice are flat fields, so
+    they must live at the top of tend.toml — not in a `[tts]` section.
+    Also migrates any legacy nested keys from older versions of this
+    function so existing installs don't need hand-editing.
+    """
     from tend import paths
+    from tend.cli.voices import _write_toml
     import tomllib
 
     toml_path = paths.tend_home() / "tend.toml"
@@ -119,23 +126,19 @@ def _persist_tts_provider(provider: str, avspeech_voice: str = "") -> None:
         data = tomllib.loads(toml_path.read_text(encoding="utf-8"))
     else:
         data = {}
-    tts = data.setdefault("tts", {})
-    tts["provider"] = provider
-    if avspeech_voice:
-        tts["avspeech_voice"] = avspeech_voice
 
-    lines = []
-    for section, body in data.items():
-        lines.append(f"[{section}]")
-        for k, val in body.items():
-            if isinstance(val, str):
-                lines.append(f'{k} = "{val}"')
-            elif isinstance(val, bool):
-                lines.append(f"{k} = {'true' if val else 'false'}")
-            else:
-                lines.append(f"{k} = {val}")
-        lines.append("")
-    toml_path.write_text("\n".join(lines), encoding="utf-8")
+    # Migrate legacy [tts] section from prior versions.
+    legacy = data.pop("tts", None) if isinstance(data.get("tts"), dict) else None
+    if legacy:
+        for k in ("provider", "avspeech_voice"):
+            if k in legacy:
+                data[("tts_" + k) if k == "provider" else k] = legacy[k]
+
+    data["tts_provider"] = provider
+    if avspeech_voice:
+        data["avspeech_voice"] = avspeech_voice
+
+    _write_toml(toml_path, data)
 
 
 def _ask_secret(key: str, *, noninteractive: bool, console: Console) -> None:

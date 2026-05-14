@@ -58,7 +58,13 @@ def voices_list() -> None:
 def voices_set(
     identifier: str = typer.Argument(..., help="AVSpeechSynthesisVoice identifier."),
 ) -> None:
-    """Write the chosen identifier to [tts] avspeech_voice in tend.toml."""
+    """Write the chosen identifier to avspeech_voice in tend.toml.
+
+    Settings.avspeech_voice is a top-level field; we write it that way too.
+    Also migrates any legacy `[tts] avspeech_voice` (or `[tts] provider`)
+    found in the existing file up to the top level so the user doesn't
+    have to hand-edit.
+    """
     _require_macos()
     from tend import paths
     import tomllib
@@ -68,20 +74,44 @@ def voices_set(
         data = tomllib.loads(toml_path.read_text(encoding="utf-8"))
     else:
         data = {}
-    data.setdefault("tts", {})["avspeech_voice"] = identifier
 
-    # tomllib doesn't write; emit a minimal-but-readable TOML by hand.
-    lines = []
-    for section, body in data.items():
-        lines.append(f"[{section}]")
-        for k, val in body.items():
-            if isinstance(val, str):
-                lines.append(f'{k} = "{val}"')
-            else:
-                lines.append(f"{k} = {val}")
+    # Migrate legacy nested keys (we used to write under [tts]; Settings reads them flat).
+    legacy = data.pop("tts", None) if isinstance(data.get("tts"), dict) else None
+    if legacy:
+        for k in ("provider", "avspeech_voice"):
+            if k in legacy and k not in data:
+                data[("tts_" + k) if k == "provider" else k] = legacy[k]
+
+    data["avspeech_voice"] = identifier
+
+    _write_toml(toml_path, data)
+    Console().print(f"[green]✓[/green] Set avspeech_voice = {identifier}")
+
+
+def _write_toml(path, data: dict) -> None:
+    """Serialize a flat-then-section dict to TOML by hand.
+
+    Sections (sub-dicts) are written last so top-level scalars stay above
+    them — that's the only way pydantic-settings reads top-level fields
+    correctly from the same file that also has nested [webhook] / etc.
+    """
+    scalars = {k: v for k, v in data.items() if not isinstance(v, dict)}
+    sections = {k: v for k, v in data.items() if isinstance(v, dict)}
+
+    def fmt(val):
+        if isinstance(val, bool):
+            return "true" if val else "false"
+        if isinstance(val, str):
+            return f'"{val}"'
+        return str(val)
+
+    lines = [f"{k} = {fmt(v)}" for k, v in scalars.items()]
+    for section, body in sections.items():
         lines.append("")
-    toml_path.write_text("\n".join(lines), encoding="utf-8")
-    Console().print(f"[green]✓[/green] Set tts.avspeech_voice = {identifier}")
+        lines.append(f"[{section}]")
+        for k, v in body.items():
+            lines.append(f"{k} = {fmt(v)}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 @voices_app.command("test")
