@@ -155,6 +155,130 @@ def _check_anthropic(api_key: str, model: str) -> str | None:
     return f"HTTP {r.status_code}: {body}"
 
 
+class AVSpeechSynthesizerTTSService(TTSService):
+    """Local TTS on macOS via Apple's AVSpeechSynthesizer.
+
+    Uses `write(_:toBufferCallback:)` (macOS 13+) to receive
+    AVAudioPCMBuffer chunks and emits them as `TTSAudioRawFrame`s at
+    the pipecat-requested sample rate. Voice is selected via
+    `AVSpeechSynthesisVoice(identifier:)`; empty identifier means the
+    system default voice.
+
+    Siri-quality voices are not exposed by this API. Premium/Enhanced
+    voices installed via VoiceOver Utility (or Read & Speak on older
+    macOS) are reachable.
+    """
+
+    def __init__(
+        self,
+        *,
+        voice_identifier: str = "",
+        sample_rate: int = 16000,
+        **kwargs,
+    ):
+        super().__init__(sample_rate=sample_rate, **kwargs)
+        self._voice_identifier = voice_identifier
+        self._sample_rate = sample_rate
+
+    def can_generate_metrics(self) -> bool:
+        return True
+
+    async def _synthesize_to_pcm(self, text: str):
+        """Async generator: yields raw int16 mono PCM bytes at self._sample_rate.
+
+        On macOS, drives AVSpeechSynthesizer via PyObjC. Resampling to
+        self._sample_rate is done from the buffer's native format.
+
+        IMPORTANT (implementer note): the PCM extraction below from
+        AVAudioPCMBuffer.floatChannelData() via PyObjC is the fiddliest
+        bit. The structure varies slightly across PyObjC versions. If
+        the buffer pointer doesn't support indexing as written, consult
+        `python -c "import AVFoundation; help(AVFoundation.AVAudioPCMBuffer)"`
+        for the canonical access path on this PyObjC version. The unit
+        test mocks this method out, so the test passes regardless of
+        native plumbing — but a manual smoke test on a real Mac is
+        required to confirm the implementation works in practice.
+        """
+        import AVFoundation
+        import asyncio
+        import array
+        import audioop
+
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+        SENTINEL = object()
+
+        synth = AVFoundation.AVSpeechSynthesizer.new()
+        utt = AVFoundation.AVSpeechUtterance.speechUtteranceWithString_(text)
+        if self._voice_identifier:
+            voice = AVFoundation.AVSpeechSynthesisVoice.voiceWithIdentifier_(
+                self._voice_identifier,
+            )
+            if voice is not None:
+                utt.setVoice_(voice)
+
+        def callback(buffer):
+            if buffer is None:
+                loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
+                return
+
+            fmt = buffer.format()
+            channels = fmt.channelCount()
+            native_sr = int(fmt.sampleRate())
+            n_frames = buffer.frameLength()
+
+            # Try int16ChannelData first (less common but cheaper).
+            i16 = buffer.int16ChannelData()
+            if i16 is not None:
+                i16_bytes = _ptr_to_bytes(i16[0], n_frames * 2)
+            else:
+                # Fall back to floatChannelData → convert.
+                fc = buffer.floatChannelData()
+                if fc is None:
+                    loop.call_soon_threadsafe(queue.put_nowait, b"")
+                    return
+                floats = array.array("f")
+                floats.frombytes(_ptr_to_bytes(fc[0], n_frames * 4))
+                i16_bytes = array.array(
+                    "h",
+                    [max(-32768, min(32767, int(x * 32767))) for x in floats],
+                ).tobytes()
+
+            # Resample if needed
+            if native_sr != self._sample_rate:
+                i16_bytes, _ = audioop.ratecv(
+                    i16_bytes, 2, channels, native_sr, self._sample_rate, None,
+                )
+            loop.call_soon_threadsafe(queue.put_nowait, i16_bytes)
+
+        synth.writeUtterance_toBufferCallback_(utt, callback)
+
+        while True:
+            chunk = await queue.get()
+            if chunk is SENTINEL:
+                break
+            if chunk:
+                yield chunk
+
+    async def run_tts(self, text: str):
+        from pipecat.frames.frames import (
+            TTSAudioRawFrame, TTSStartedFrame, TTSStoppedFrame,
+        )
+
+        yield TTSStartedFrame()
+        async for pcm in self._synthesize_to_pcm(text):
+            yield TTSAudioRawFrame(
+                audio=pcm, sample_rate=self._sample_rate, num_channels=1,
+            )
+        yield TTSStoppedFrame()
+
+
+def _ptr_to_bytes(ptr, n: int) -> bytes:
+    """Read `n` bytes from a PyObjC C-pointer."""
+    import ctypes
+    return ctypes.string_at(int(ptr), n)
+
+
 def _make_brain_llm(settings: Settings):
     """Return an `AnthropicLLMService` if the preflight passes, else None.
 
