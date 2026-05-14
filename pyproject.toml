@@ -17,6 +17,7 @@ dependencies = [
     "questionary>=2.0",
     "rich>=13.0",
     "keyring>=24.0",
+    "pyaec>=1.0.1",
 ]
 
 [project.optional-dependencies]

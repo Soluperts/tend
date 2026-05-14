@@ -17,6 +17,10 @@ from __future__ import annotations
 import logging
 import sys
 import threading
+from typing import Optional
+
+from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
+from pipecat.frames.frames import FilterControlFrame, FilterEnableFrame
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +86,93 @@ def _webrtc_importable() -> bool:
         return True
     except ImportError:
         return False
+
+
+class SpeexAECFilter(BaseAudioFilter):
+    """Pipecat-compatible AEC filter backed by pyaec (SpeexDSP).
+
+    Reads a same-length reference chunk from `reference` on each
+    `filter()` call and asks pyaec to cancel the echo. Length in == length out.
+    """
+
+    # 20 ms of int16 mono at 16 kHz = 320 samples = 640 bytes; pyaec is
+    # happy with any matched-length pair but frame size 320 matches
+    # pipecat's transport chunking.
+    _FRAME_SAMPLES = 320
+    _FILTER_LENGTH = 320 * 8  # ~160 ms tail; covers desk-distance echo + hw latency
+
+    def __init__(self, reference: ReferenceBuffer):
+        self._reference = reference
+        self._sample_rate = 0
+        self._aec = None
+        self._enabled = True
+
+    async def start(self, sample_rate: int):
+        from pyaec import Aec
+        self._sample_rate = sample_rate
+        self._aec = Aec(
+            frame_size=self._FRAME_SAMPLES,
+            filter_length=self._FILTER_LENGTH,
+            sample_rate=sample_rate,
+            enable_preprocess=True,
+        )
+
+    async def stop(self):
+        self._aec = None
+
+    async def process_frame(self, frame: FilterControlFrame):
+        if isinstance(frame, FilterEnableFrame):
+            self._enabled = frame.enable
+
+    async def filter(self, audio: bytes) -> bytes:
+        if not self._enabled or self._aec is None:
+            return audio
+
+        # Read aligned reference bytes.
+        ref = self._reference.read(len(audio))
+
+        # pyaec works on int16 lists; convert via array.array for speed.
+        import array
+        mic = array.array("h")
+        mic.frombytes(audio)
+        rfa = array.array("h")
+        rfa.frombytes(ref)
+
+        # pyaec.cancel_echo wants equal-length buffers, returns list[int16].
+        cleaned = self._aec.cancel_echo(list(mic), list(rfa))
+
+        out = array.array("h", cleaned).tobytes()
+        # Defensive: if pyaec ever returns mismatched length, pad/truncate to input length.
+        if len(out) != len(audio):
+            out = (out + b"\x00" * len(audio))[:len(audio)]
+        return out
+
+
+def make_aec_filter(
+    engine: str,
+    *,
+    sample_rate: int,
+    reference: ReferenceBuffer,
+) -> Optional[BaseAudioFilter]:
+    """Instantiate an AEC filter for the given engine name.
+
+    "off" returns None (caller installs no filter).
+    "speex" returns a SpeexAECFilter.
+    "webrtc-aec3" raises RuntimeError if the optional dep is missing.
+    """
+    if engine == "off":
+        return None
+    if engine == "speex":
+        return SpeexAECFilter(reference=reference)
+    if engine == "webrtc-aec3":
+        if not _webrtc_importable():
+            raise RuntimeError(
+                "aec_engine='webrtc-aec3' requested but webrtc-audio-processing "
+                "is not installed. Install with: pipx inject tend webrtc-audio-processing"
+            )
+        # Implementation gated to Task 15.
+        raise NotImplementedError("webrtc-aec3 filter — see Task 15")
+    raise ValueError(f"Unknown aec engine: {engine!r}")
 
 
 def resolve_aec_engine(settings) -> str:

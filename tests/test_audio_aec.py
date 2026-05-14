@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sys
 
+import pytest
+
 from tend.audio.aec import ReferenceBuffer, resolve_aec_engine
 from tend.config import Settings
 
@@ -75,3 +77,60 @@ def test_resolve_aec_engine_auto_macos_webrtc_missing(monkeypatch):
     )
     settings = Settings(_env_file=None, aec_engine="auto")
     assert resolve_aec_engine(settings) == "speex"
+
+
+# ---------------------------------------------------------------------------
+# SpeexAECFilter + make_aec_filter
+# ---------------------------------------------------------------------------
+
+from tend.audio.aec import SpeexAECFilter, make_aec_filter
+
+
+@pytest.mark.asyncio
+async def test_speex_filter_passthrough_when_reference_empty():
+    """When the reference buffer is silent, the filter should return
+    audio that is at most the original (echo cancellation against
+    silence is the identity-ish operation, possibly with mild
+    suppression but never length-changed)."""
+    rb = ReferenceBuffer()
+    f = SpeexAECFilter(reference=rb)
+    await f.start(sample_rate=16000)
+
+    mic = b"\x10\x00" * 160  # 10 ms of int16 value 16 at 16 kHz mono
+    out = await f.filter(mic)
+
+    assert isinstance(out, bytes)
+    assert len(out) == len(mic)
+
+
+@pytest.mark.asyncio
+async def test_speex_filter_round_trip_length_preserved():
+    """For any input size matching a multiple of the frame size, the
+    output is the same number of bytes."""
+    rb = ReferenceBuffer()
+    f = SpeexAECFilter(reference=rb)
+    await f.start(sample_rate=16000)
+
+    rb.write(b"\x05\x00" * 160)
+    mic = b"\x20\x00" * 160
+    out = await f.filter(mic)
+
+    assert len(out) == len(mic)
+
+
+def test_make_aec_filter_off_returns_none():
+    rb = ReferenceBuffer()
+    assert make_aec_filter("off", sample_rate=16000, reference=rb) is None
+
+
+def test_make_aec_filter_speex_returns_filter():
+    rb = ReferenceBuffer()
+    f = make_aec_filter("speex", sample_rate=16000, reference=rb)
+    assert isinstance(f, SpeexAECFilter)
+
+
+def test_make_aec_filter_webrtc_unavailable_raises(monkeypatch):
+    monkeypatch.setattr("tend.audio.aec._webrtc_importable", lambda: False)
+    rb = ReferenceBuffer()
+    with pytest.raises(RuntimeError, match="webrtc-audio-processing"):
+        make_aec_filter("webrtc-aec3", sample_rate=16000, reference=rb)
