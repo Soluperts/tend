@@ -127,6 +127,10 @@ class SpeexAECFilter(BaseAudioFilter):
             sample_rate=sample_rate,
             enable_preprocess=True,
         )
+        logger.info(
+            f"[aec.speex] start() called: sample_rate={sample_rate} "
+            f"frame_samples={self._FRAME_SAMPLES} filter_length={self._FILTER_LENGTH}"
+        )
 
     async def stop(self):
         # Explicitly call AecDestroy while our lib reference is still valid,
@@ -142,7 +146,21 @@ class SpeexAECFilter(BaseAudioFilter):
             self._enabled = frame.enable
 
     async def filter(self, audio: bytes) -> bytes:
+        # Count *every* call to surface "filter never entered" vs "filter
+        # entered but no-op" cases.
+        self._call_count += 1
+        if self._call_count == 1:
+            logger.info(
+                f"[aec.speex] filter() first call: "
+                f"enabled={self._enabled} aec_initialized={self._aec is not None}"
+            )
+
         if not self._enabled or self._aec is None:
+            if self._call_count % 200 == 0:
+                logger.warning(
+                    f"[aec.speex] filter() no-op (call #{self._call_count}): "
+                    f"enabled={self._enabled} aec_initialized={self._aec is not None}"
+                )
             return audio
 
         # Read aligned reference bytes.
@@ -170,7 +188,6 @@ class SpeexAECFilter(BaseAudioFilter):
         # Diagnostic logging: surface mic / ref / residual energies so we can
         # see whether speex is actually suppressing. RMS amplitude is more
         # informative than peak; compute over a chunk of int16 samples.
-        self._call_count += 1
         if self._call_count % self._diag_every == 0:
             def _rms_i16(buf):
                 if not buf:
