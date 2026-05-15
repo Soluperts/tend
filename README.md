@@ -25,7 +25,7 @@ Prereqs:
 
 Install:
 
-    pipx install tend
+    pipx install tend-assistant
 
 Bootstrap and verify:
 
@@ -46,7 +46,7 @@ Prereqs:
 
 Install:
 
-    pipx install tend
+    pipx install tend-assistant
 
 **AEC on macOS:** tend defaults to Apple's VoiceProcessingIO (`aec_engine = "vpio"`)
 for AEC + noise suppression + AGC — the same audio processing path FaceTime uses.
@@ -59,7 +59,7 @@ Optional WebRTC AEC3 (alternative software AEC):
 
     xcode-select --install
     brew install webrtc-audio-processing
-    pipx inject tend webrtc-audio-processing
+    pipx inject tend-assistant webrtc-audio-processing
 
 Bootstrap and verify:
 

@@ -1,0 +1,44 @@
+name: Feature request
+description: A capability tend doesn't have but should.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening: please skim `ROADMAP.md` (specifically the
+        "Not on the roadmap" section). Several common asks are
+        deliberate non-choices with documented rationale — if your
+        request is in that list, the answer here will be the same.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that tend doesn't support today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would you imagine this working? CLI command, skill, webhook payload — whatever surface fits.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds, related skills, or other tools you've tried.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      description: Confirm this request fits tend's scope.
+      options:
+        - label: "I've read the 'Not on the roadmap' section of `ROADMAP.md` and this request isn't a documented non-goal."
+          required: true

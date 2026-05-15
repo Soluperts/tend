@@ -1,11 +1,22 @@
 [project]
-name = "tend"
+name = "tend-assistant"
 version = "0.1.0"
-description = "Personal AI assistant for desk workers (Raspberry Pi voice agent)"
+description = "Personal AI assistant for desk workers (Raspberry Pi / macOS voice agent)"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
+authors = [{ name = "Ridhwan Luthra" }]
 classifiers = [
+    "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
     "anthropic>=0.40",
@@ -38,14 +49,11 @@ dev = [
 tend = "tend.cli:main"
 
 [build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools.package-data]
-"tend._defaults" = ["**/*"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/tend"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -1,8 +1,9 @@
-"""GeneralWorker — runs claude inside the persistent deskclaw workspace.
+# SPDX-License-Identifier: MIT
+"""GeneralWorker — runs claude inside the persistent tend workspace.
 
 It ensures the workspace dir exists, spawns claude with cwd=workspace,
 publishes a TTSSpeakFrame and a task_update, and returns. There is no
-per-job worktree isolation; everything DeskClaw builds accumulates in
+per-job worktree isolation; everything the worker builds accumulates in
 that one directory.
 """
 

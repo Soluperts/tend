@@ -1,0 +1,66 @@
+name: Bug report
+description: Something tend is doing wrong (crashes, wrong behavior, audio failures).
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please run `tend doctor`
+        and paste the output below — it covers most of the environment
+        questions automatically.
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Raspberry Pi 4
+        - Raspberry Pi 5
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Other Linux
+    validations:
+      required: true
+
+  - type: input
+    id: tend-version
+    attributes:
+      label: tend version
+      description: Output of `tend --version` or the commit SHA if running from a clone.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`tend doctor` output"
+      description: Paste the full output. Redact secrets manually if any leak.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect to happen, and what actually happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Minimal sequence to reproduce. "It happens sometimes" is fine if reliable repro isn't possible — say so.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Excerpts from `~/Library/Logs/tend/tend.log` (macOS) or `journalctl --user -u tend` (Linux). Don't paste the entire log — just the part around the failure.
+      render: shell
+    validations:
+      required: false
