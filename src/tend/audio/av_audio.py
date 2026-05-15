@@ -347,6 +347,14 @@ class AVAudioOutputTransport(BaseOutputTransport):
 
     _params: AVAudioTransportParams
 
+    # Max output buffers queued in the player at any time. AVAudioPlayerNode
+    # concatenates scheduled buffers seamlessly, but if we wait for each
+    # buffer to FINISH playing before scheduling the next, the player runs
+    # dry between buffers and produces audible clicks/dropouts. Keep ~3 x
+    # ~20 ms = 60 ms of audio queued — smooth playback, still tight enough
+    # for barge-in responsiveness.
+    _MAX_INFLIGHT = 3
+
     def __init__(
         self,
         params: AVAudioTransportParams,
@@ -360,6 +368,7 @@ class AVAudioOutputTransport(BaseOutputTransport):
         self._converter: "AVAudioConverter | None" = None
         self._sample_rate = 0
         self._started = False
+        self._inflight_sem: asyncio.Semaphore | None = None
 
     async def start(self, frame: StartFrame):
         await super().start(frame)
@@ -397,6 +406,7 @@ class AVAudioOutputTransport(BaseOutputTransport):
         if not started:
             raise RuntimeError(f"engine.startAndReturnError_ failed: {err}")
         self._player.play()
+        self._inflight_sem = asyncio.Semaphore(self._MAX_INFLIGHT)
         self._started = True
         await self.set_transport_ready(frame)
 
@@ -408,7 +418,12 @@ class AVAudioOutputTransport(BaseOutputTransport):
         self._started = False
 
     async def write_audio_frame(self, frame: OutputAudioRawFrame) -> bool:  # type: ignore[override]
-        if self._player is None or self._converter is None or self._output_format is None:
+        if (
+            self._player is None
+            or self._converter is None
+            or self._output_format is None
+            or self._inflight_sem is None
+        ):
             return False
 
         # AVAudioPlayerNodeCompletionDataPlayedBack == 0 in CoreAudio headers.
@@ -424,16 +439,21 @@ class AVAudioOutputTransport(BaseOutputTransport):
         )
 
         loop = asyncio.get_running_loop()
-        done = asyncio.Event()
+        sem = self._inflight_sem
+        # Block here only when MAX_INFLIGHT buffers are already in flight.
+        # First N writes complete immediately, filling the player's queue
+        # so it never runs dry between buffers.
+        await sem.acquire()
 
         def completion(*args, **kwargs):
-            # Fires on a CoreAudio thread. Marshal to loop.
-            loop.call_soon_threadsafe(done.set)
+            # Fires on a CoreAudio thread (either .dataPlayedBack normal
+            # completion or .interrupted from player.stop()). Either way,
+            # marshal a release onto the asyncio loop.
+            loop.call_soon_threadsafe(sem.release)
 
         self._player.scheduleBuffer_completionCallbackType_completionHandler_(
             out_buf, COMPLETION_DATA_PLAYED_BACK, completion,
         )
-        await done.wait()
         return True
 
 

@@ -365,10 +365,11 @@ async def test_output_transport_start_attaches_player_to_output_node(monkeypatch
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="AVFoundation requires macOS")
 @pytest.mark.asyncio
-async def test_output_transport_write_frame_blocks_until_completion(monkeypatch):
-    """write_audio_frame schedules a buffer and awaits .dataPlayedBack
-    completion. We verify it doesn't return until the fake completion
-    callback fires."""
+async def test_output_transport_write_frame_pipelines_then_blocks_at_limit(monkeypatch):
+    """write_audio_frame keeps MAX_INFLIGHT buffers queued in the player,
+    blocking only when the queue is full. This avoids the underrun gaps
+    that occur when each buffer is awaited to completion before the next
+    is scheduled."""
     import asyncio
     from unittest.mock import MagicMock
 
@@ -379,11 +380,9 @@ async def test_output_transport_write_frame_blocks_until_completion(monkeypatch)
     fake_engine.startAndReturnError_.return_value = (True, None)
     fake_player = MagicMock()
 
-    # Capture the completion handler scheduleBuffer is given so the test
-    # can fire it from outside.
-    captured_handler = []
+    captured_handlers = []
     def fake_schedule(buf, ctype, handler):
-        captured_handler.append(handler)
+        captured_handlers.append(handler)
     fake_player.scheduleBuffer_completionCallbackType_completionHandler_.side_effect = (
         fake_schedule
     )
@@ -421,17 +420,24 @@ async def test_output_transport_write_frame_blocks_until_completion(monkeypatch)
     await out.start(StartFrame(audio_in_sample_rate=16000, audio_out_sample_rate=16000))
 
     frame = OutputAudioRawFrame(audio=b"\x00\x01" * 160, sample_rate=16000, num_channels=1)
-    task = asyncio.create_task(out.write_audio_frame(frame))
 
-    # Give write_audio_frame a chance to enter the await.
+    # First MAX_INFLIGHT writes succeed immediately (semaphore lets them through).
+    for _ in range(out._MAX_INFLIGHT):
+        assert await asyncio.wait_for(out.write_audio_frame(frame), timeout=0.5) is True
+    assert len(captured_handlers) == out._MAX_INFLIGHT
+
+    # The next write blocks — the player is "full".
+    blocked_task = asyncio.create_task(out.write_audio_frame(frame))
     await asyncio.sleep(0.01)
-    assert not task.done()
-    assert len(captured_handler) == 1
+    assert not blocked_task.done()
+    # No new schedule yet — the semaphore is exhausted.
+    assert len(captured_handlers) == out._MAX_INFLIGHT
 
-    # Fire the completion handler from a "CoreAudio thread" (synchronous is fine for the test).
-    captured_handler[0]()
-    result = await asyncio.wait_for(task, timeout=1.0)
+    # Fire one completion → semaphore releases → blocked write proceeds.
+    captured_handlers[0]()
+    result = await asyncio.wait_for(blocked_task, timeout=1.0)
     assert result is True
+    assert len(captured_handlers) == out._MAX_INFLIGHT + 1
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="AVFoundation requires macOS")
