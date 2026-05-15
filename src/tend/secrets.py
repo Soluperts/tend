@@ -49,13 +49,18 @@ def set_secret(key: str, value: str) -> Literal["keyring", "dotenv"]:
 
 
 def get_secret(key: str) -> str | None:
-    """Look up `key` in env vars → keyring → $TEND_HOME/.env. None if absent."""
+    """Look up `key` in env vars → keyring → $TEND_HOME/.env. None if absent.
+
+    Any keyring error (no backend, user-denied keychain access, locked store)
+    is treated as a miss so the dotenv fallback wins. Without this, a denied
+    macOS Keychain prompt would crash any code path that touches a secret.
+    """
     v = os.environ.get(key)
     if v:
         return v
     try:
         v = _keyring.get_password(_SERVICE, key)
-    except _keyring_errors.NoKeyringError:
+    except _keyring_errors.KeyringError:
         v = None
     if v:
         return v
@@ -88,7 +93,7 @@ def secret_backend(key: str) -> Literal["env", "keyring", "dotenv"] | None:
     try:
         if _keyring.get_password(_SERVICE, key):
             return "keyring"
-    except _keyring_errors.NoKeyringError:
+    except _keyring_errors.KeyringError:
         pass
     if _read_dotenv(key) is not None:
         return "dotenv"

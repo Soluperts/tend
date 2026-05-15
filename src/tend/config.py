@@ -174,12 +174,36 @@ class Settings(BaseSettings):
         return (init_settings, env_settings, dotenv, toml, file_secret_settings)
 
 
-# Pull keyring-stored secrets into os.environ before Settings is built. Pydantic
-# only reads from env vars + dotenv; without this step, secrets saved by
-# `tend setup` to the OS keyring (the default on macOS) are invisible at boot
-# and the Brain LLM preflight reports "ANTHROPIC_API_KEY not set."
-from tend.secrets import load_into_env as _load_secrets_into_env
+# `settings` is the process-wide read-only snapshot. It is *lazily* constructed
+# on first access via PEP 562 module __getattr__ so that simply importing
+# `tend.config` (which the CLI does for `tend --help`, all subcommand imports,
+# and tests) does not touch the OS keyring. On macOS, eager keyring access
+# triggers a Keychain Access prompt before any output is printed — a hostile
+# first-run experience. Code that genuinely needs secrets accesses
+# `tend.config.settings`; the singleton is built once, loads keyring secrets
+# into env beforehand, and is cached for the lifetime of the process.
+#
+# Modules that construct `Settings()` directly (tests, `tend doctor`) get
+# whatever is already in env/dotenv/tend.toml without triggering keyring.
 
-_load_secrets_into_env()
+_settings_cache: "Settings | None" = None
 
-settings = Settings()
+
+def _build_settings() -> Settings:
+    # Pull keyring-stored secrets into os.environ so pydantic-settings — which
+    # only reads env vars + dotenv — sees them. Defensive: any keyring error
+    # is swallowed inside the helpers; we never want a denied keychain prompt
+    # to block startup.
+    from tend.secrets import load_into_env
+
+    load_into_env()
+    return Settings()
+
+
+def __getattr__(name: str):
+    if name == "settings":
+        global _settings_cache
+        if _settings_cache is None:
+            _settings_cache = _build_settings()
+        return _settings_cache
+    raise AttributeError(f"module 'tend.config' has no attribute {name!r}")

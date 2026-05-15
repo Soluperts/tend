@@ -9,8 +9,6 @@ import urllib.request
 
 import typer
 
-from tend.config import settings
-
 
 app = typer.Typer(no_args_is_help=True, help="Probe the local webhook server.")
 
@@ -18,6 +16,11 @@ app = typer.Typer(no_args_is_help=True, help="Probe the local webhook server.")
 @app.command("test")
 def test() -> None:
     """POST a smoke message to /say (requires TEND_WEBHOOK_TOKEN)."""
+    # Import the settings singleton lazily — at module load it would trigger
+    # the keyring read via tend.config.__getattr__, and `tend --help` should
+    # never touch the OS keychain on macOS.
+    from tend.config import settings
+
     token = os.environ.get("TEND_WEBHOOK_TOKEN")
     if not token:
         print(
