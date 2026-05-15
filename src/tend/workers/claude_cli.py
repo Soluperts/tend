@@ -86,6 +86,9 @@ class ClaudeRunSpec:
                                         # resume_session_id is unset, run_claude
                                         # generates a fresh uuid.
     model: str | None = None
+    # One of: default, acceptEdits, auto, bypassPermissions, dontAsk, plan.
+    # None → omit the flag (claude falls back to its own default 'default').
+    permission_mode: str | None = None
 
 
 def _build_args(
@@ -109,6 +112,8 @@ def _build_args(
         args += ["--session-id", session_id]
     if spec.allowed_tools:
         args += ["--allowedTools", ",".join(spec.allowed_tools)]
+    if spec.permission_mode:
+        args += ["--permission-mode", spec.permission_mode]
     # Caller decides whether to write a system prompt (i.e. whether to pass
     # `system_prompt_path`). _build_args only honours the path it's given,
     # gated by the resume rule (resumed sessions already have the prompt).
@@ -251,18 +256,29 @@ class ClaudeCliWorker(BaseAgent):
                 cwd=str(spec.cwd) if spec.cwd else None,
             )
 
-        # 1a. Warn loud-and-clear if the worker is dispatching with no
-        # allowed_tools restriction — that means claude gets its full default
-        # tool surface (Bash, file editing, web search, …). Almost certainly
-        # not intended; it usually indicates a missing [workers.<name>] block
-        # in tend.toml.
-        if not spec.allowed_tools and not spec.resume_session_id:
+        # 1a. Log the resolved permission posture once per spawn. The
+        # daemon's default is permission_mode='bypassPermissions' with no
+        # allowlist — necessary because no human is available to approve
+        # interactive prompts. Surface it loudly the first time so users
+        # who don't realise can tighten by setting [workers.<name>]
+        # allowed_tools (and optionally permission_mode='default') in
+        # tend.toml.
+        if not spec.resume_session_id:
             from loguru import logger
-            logger.warning(
-                f"{self.name}: spawning claude with no --allowedTools "
-                "restriction. Claude has full tool access. "
-                "Set [workers.<name>].allowed_tools in tend.toml to restrict."
-            )
+            if spec.permission_mode == "bypassPermissions" and not spec.allowed_tools:
+                logger.warning(
+                    f"{self.name}: spawning claude with "
+                    "permission_mode=bypassPermissions and no allowedTools "
+                    "restriction. Claude has full tool access without prompts. "
+                    "To restrict: set [workers.<name>].permission_mode='default' "
+                    "and populate allowed_tools in tend.toml."
+                )
+            else:
+                logger.info(
+                    f"{self.name}: spawning claude "
+                    f"permission_mode={spec.permission_mode or 'default'} "
+                    f"allowed_tools={spec.allowed_tools or '(none)'}"
+                )
 
         # 2. System prompt → file (only on first run).
         sys_path = None

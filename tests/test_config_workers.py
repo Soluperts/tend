@@ -8,8 +8,27 @@ def test_worker_config_defaults():
     assert cfg.model is None
     assert cfg.setting_sources == "user"
     assert cfg.allowed_tools == []
+    # bypassPermissions is the default — daemon has no human at the terminal
+    # to approve permission prompts. Tightening is opt-in via tend.toml.
+    assert cfg.permission_mode == "bypassPermissions"
     assert cfg.mcp_config_path is None
     assert cfg.workspace_dir is None
+
+
+def test_worker_config_permission_mode_override(tmp_path, monkeypatch):
+    """User can opt into a stricter permission mode in tend.toml."""
+    monkeypatch.setenv("TEND_HOME", str(tmp_path))
+    toml = tmp_path / "tend.toml"
+    toml.write_text(
+        """
+[workers.general]
+permission_mode = "default"
+allowed_tools = ["Read", "Edit"]
+"""
+    )
+    s = Settings()
+    assert s.workers["general"].permission_mode == "default"
+    assert s.workers["general"].allowed_tools == ["Read", "Edit"]
 
 
 def test_settings_loads_workers_block_from_toml(tmp_path, monkeypatch):

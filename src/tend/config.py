@@ -27,6 +27,12 @@ class WorkerConfig(BaseModel):
     model: str | None = None
     setting_sources: str = "user"
     allowed_tools: list[str] = []
+    # claude --permission-mode value. Default 'bypassPermissions' because the
+    # worker runs as an unattended daemon — there is no human to approve
+    # prompts, so the 'default' mode would hang the run on any tool use.
+    # To tighten security, set this to 'default' AND populate `allowed_tools`
+    # with the explicit list of tools the worker is allowed to use.
+    permission_mode: str = "bypassPermissions"
     mcp_config_path: str | None = None
     # Persistent workspace where the worker builds and accumulates artifacts.
     # Resolved against `~` if it starts with `~`. None → $TEND_HOME/workspace/.

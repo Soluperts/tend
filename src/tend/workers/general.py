@@ -167,6 +167,7 @@ class GeneralWorker(ClaudeCliWorker):
                 system_prompt=system_prompt,
                 resume_session_id=resume_id,
                 allowed_tools=self._config.allowed_tools,
+                permission_mode=self._config.permission_mode,
                 setting_sources=self._config.setting_sources,
                 model=self._config.model,
                 cwd=workspace,

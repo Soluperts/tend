@@ -78,6 +78,22 @@ def test_build_args_empty_allowed_tools_omits_flag():
     assert "--allowedTools" not in args
 
 
+def test_build_args_permission_mode_emits_flag():
+    """permission_mode set on the spec maps to --permission-mode <mode>."""
+    spec = ClaudeRunSpec(prompt="x", permission_mode="bypassPermissions")
+    args = _build_args(spec, session_id="s", system_prompt_path=None)
+    assert "--permission-mode" in args
+    idx = args.index("--permission-mode")
+    assert args[idx + 1] == "bypassPermissions"
+
+
+def test_build_args_permission_mode_none_omits_flag():
+    """permission_mode=None must not emit a bare --permission-mode flag."""
+    spec = ClaudeRunSpec(prompt="x", permission_mode=None)
+    args = _build_args(spec, session_id="s", system_prompt_path=None)
+    assert "--permission-mode" not in args
+
+
 def test_scrubbed_env_removes_dangerous_keys():
     env_in = {
         "PATH": "/usr/bin",
