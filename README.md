@@ -6,9 +6,11 @@ The brain is multi-turn within a day-session; conversation context persists acro
 
 ## What you need
 
-- Raspberry Pi 4 or 5 (64-bit Raspberry Pi OS), **or** a Mac running macOS 14+ on Apple Silicon.
-- One USB microphone (Linux/Pi) or built-in / USB mic (macOS).
-- One speaker (USB or Bluetooth).
+- **Raspberry Pi**, **or** a Mac running macOS 14+ on Apple Silicon. Tested on **Pi 5 with 8 GB RAM** running 64-bit Raspberry Pi OS; lower-config Pis (Pi 5 4 GB, Pi 4) should work but you'll have less headroom for the wake-word model, Whisper, and concurrent worker subprocesses.
+- **Microphone:**
+  - **Pi:** a [reSpeaker XVF3800 USB mic-array](https://www.seeedstudio.com/ReSpeaker-XVF3800-USB-4-Mic-Array-p-5896.html). tend's Linux audio path is tuned for it — hardware AEC and beamforming on the device mean barge-in works without software AEC. Other USB mics will capture audio fine but you'll need to set `mic_channels = 1` and `aec_engine = "speex"` (or `"webrtc-aec3"`) in `~/.tend/tend.toml`; expect to hear tend itself in your own speech until echo cancellation is dialed in.
+  - **macOS:** the built-in mic works; tend uses Apple's VoiceProcessingIO for AEC + noise suppression + AGC. External USB mics work too.
+- **Speaker:** any USB speaker (recommended for low latency) or Bluetooth speaker (adds ~150–250 ms output delay — fine for casual use, noticeable when interrupting tend mid-sentence).
 - Python 3.11+.
 - Internet for cloud STT/TTS/LLM (optional — local fallbacks work offline once models are downloaded).
 
