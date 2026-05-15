@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """`tend skills new` — scaffold a new SKILL.md from the template."""
 
 from __future__ import annotations

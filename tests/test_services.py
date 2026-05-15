@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for the service factories — preflight + cloud-or-local fallback."""
 
 from unittest.mock import MagicMock

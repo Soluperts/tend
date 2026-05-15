@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """`tend setup` — interactive bootstrap wizard."""
 
 from __future__ import annotations

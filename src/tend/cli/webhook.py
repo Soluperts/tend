@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """`tend webhook ...` — probe the local webhook server."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for SleepPhraseGate — fuzzy sleep match + silence timeout."""
 
 import asyncio

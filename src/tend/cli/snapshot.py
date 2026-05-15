@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """`tend snapshot` — record the local Claude Code environment."""
 
 from __future__ import annotations

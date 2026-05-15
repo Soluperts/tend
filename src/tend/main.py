@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tend entry point.
 
 Boot order:

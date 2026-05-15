@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for tend.audio.av_audio."""
 
 from __future__ import annotations

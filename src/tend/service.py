@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """service-unit install/uninstall for tend.
 
 Writes either a systemd user unit (Linux) or a launchd LaunchAgent

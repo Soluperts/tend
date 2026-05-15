@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for tend.service macOS (launchd) branches."""
 
 from __future__ import annotations

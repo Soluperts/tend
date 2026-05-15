@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """AVAudioEngine-based transport for macOS, with VoiceProcessingIO enabled.
 
 Why this exists: built-in MacBook mic+speaker generate echo that the speex

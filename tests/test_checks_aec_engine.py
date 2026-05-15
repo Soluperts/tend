@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for tend.checks.check_aec_engine."""
 
 from __future__ import annotations

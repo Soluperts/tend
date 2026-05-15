@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Cloud-preferred / local-fallback service factories.
 
 Each factory runs an HTTP preflight against the cloud provider and returns

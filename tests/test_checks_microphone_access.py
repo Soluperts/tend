@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for tend.checks.probe_microphone_access."""
 
 from __future__ import annotations

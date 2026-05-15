@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Pure helpers for parsing schedule strings and computing next-fire times.
 
 No I/O. Used by Scheduler, Brain.schedule, and CLI alike.

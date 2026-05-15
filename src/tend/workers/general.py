@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """GeneralWorker — runs `claude` inside the persistent deskclaw workspace.
 
 The worker is general-purpose: capability comes from markdown skills under

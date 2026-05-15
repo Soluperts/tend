@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 import json
 import textwrap
 from pathlib import Path

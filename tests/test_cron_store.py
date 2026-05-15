@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for cron_store.py — atomic JSON read/write + CRUD."""
 
 from __future__ import annotations

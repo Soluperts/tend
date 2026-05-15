@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """SessionManager — owns the day-session lifecycle.
 
 Loads soul.md at boot and at the configured wall-clock daily reset time.

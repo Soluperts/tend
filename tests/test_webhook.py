@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for the aiohttp webhook receiver."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Brain's session-aware tools that read the SessionStore + dispatch tasks."""
 
 from unittest.mock import AsyncMock, MagicMock

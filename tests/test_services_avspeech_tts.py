@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for tend.services.AVSpeechSynthesizerTTSService.
 
 The tests mock AVFoundation so they run on any platform.

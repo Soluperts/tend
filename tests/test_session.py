@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for SessionManager — soul loading, reset propagation, daily reset scheduling."""
 
 from pathlib import Path

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """`tend service install/uninstall/start/stop/status` — service-unit management."""
 
 from __future__ import annotations

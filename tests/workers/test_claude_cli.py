@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for ClaudeCliWorker building blocks. Subprocess is injected so
 no actual `claude` is spawned in unit tests."""
 

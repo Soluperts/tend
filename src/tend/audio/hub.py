@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Hub — the always-running audio agent.
 
 Owns the local audio transport, gates, STT/TTS, the LLMContext, and the

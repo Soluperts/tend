@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for Scheduler — load, dispatch loop, missed-fire policy, API."""
 
 from __future__ import annotations

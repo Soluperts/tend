@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for ProactiveAnnouncer — cooldown, deferral, urgency, drain."""
 
 from __future__ import annotations

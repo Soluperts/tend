@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Shared event fan-out helper.
 
 Used by both `webhook.py` (`POST /event`) and `scheduler.py` (event-mode

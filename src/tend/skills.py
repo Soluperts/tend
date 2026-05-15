@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Skills layer for tend's general worker.
 
 Loads procedure markdown from ~/.tend/skills/<name>/SKILL.md, hands the

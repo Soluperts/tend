@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for tend.config.Settings — TOML, env, and default precedence."""
 
 import os

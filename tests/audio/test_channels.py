@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for StereoToMonoLeft — drops XVF3800 echo-reference channel."""
 
 from __future__ import annotations

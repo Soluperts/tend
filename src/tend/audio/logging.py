@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Latency loggers — pass-through processors that timestamp key pipeline events.
 
 Place InputLatencyLogger before STT (or shortly after). Place OutputLatencyLogger

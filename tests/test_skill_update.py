@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for the skill-update flow primitives.
 
 The Typer CLI wiring (`tend skill update`) lands in sub-project #4. This

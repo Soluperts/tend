@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Boot-time checks for optional dependencies. Each preflight returns a bool;
 the caller decides whether to log/proceed/abort based on its own policy."""
 

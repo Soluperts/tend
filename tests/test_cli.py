@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """CLI behaviour. We invoke main(argv) directly so tests don't need a shell."""
 
 import json

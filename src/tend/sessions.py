@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """On-disk persistence for worker sessions.
 
 Layout under `root` (defaults to ~/.tend/):

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for tend.checks.check_tts_provider."""
 
 from __future__ import annotations

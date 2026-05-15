@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Software AEC engine factory + speaker-reference ring buffer.
 
 Pipecat's `BaseAudioFilter.filter(audio: bytes) -> bytes` only sees the

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Smoke test that the built wheel contains every shipped default.
 
 Run on every PR. Catches the common bug of adding a default skill and

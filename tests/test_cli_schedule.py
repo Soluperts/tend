@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """End-to-end CLI tests for `tend schedule ...`."""
 
 from __future__ import annotations

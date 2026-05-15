@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Hub injects available-skills XML into Brain's system prompt."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """OutputAudioCapture — tap speaker frames into the AEC ReferenceBuffer.
 
 Sits in the Hub pipeline just before `transport.output()` so it sees

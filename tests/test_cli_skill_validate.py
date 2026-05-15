@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """`tend skills validate <name>` — frontmatter parse + safety scan."""
 
 from __future__ import annotations

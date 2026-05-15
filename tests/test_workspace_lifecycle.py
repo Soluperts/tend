@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Boot-state integration tests: tend's behavior when $TEND_HOME is missing/unclaimed/future."""
 
 from __future__ import annotations

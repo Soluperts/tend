@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for the latency loggers — they should pass frames through and not raise."""
 
 import pytest

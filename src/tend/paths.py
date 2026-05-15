@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Single source of truth for tend's filesystem paths.
 
 Resolution order for the workspace root:

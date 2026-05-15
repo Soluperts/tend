@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Pure-function tests for cron-time parsing and next-fire computation."""
 
 from __future__ import annotations

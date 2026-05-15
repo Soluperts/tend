@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Helpers shared by tend CLI command modules."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """End-to-end: setup → doctor → service install, all from CLI."""
 
 from __future__ import annotations

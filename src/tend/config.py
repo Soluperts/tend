@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Settings for tend, loaded from class defaults, tend.toml, .env, and env vars.
 
 Precedence (highest first):

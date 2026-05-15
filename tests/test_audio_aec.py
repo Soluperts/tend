@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for tend.audio.aec — ReferenceBuffer + resolve_aec_engine."""
 
 from __future__ import annotations

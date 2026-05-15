@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """tend CLI — Typer-based."""
 
 from __future__ import annotations

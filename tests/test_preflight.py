@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Boot-time preflight for the claude CLI. Logs a warning, never raises."""
 
 from unittest.mock import MagicMock, patch

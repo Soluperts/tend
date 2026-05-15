@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """WorkerConfig is loaded per-worker from tend.toml."""
 
 from tend.config import Settings, WorkerConfig

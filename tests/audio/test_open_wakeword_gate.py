@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for OpenWakeWordGate — gating + activation behaviour without real audio fixtures."""
 
 from unittest.mock import AsyncMock, MagicMock

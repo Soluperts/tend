@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """tend.checks — pure check functions consumed by setup + doctor."""
 
 from __future__ import annotations

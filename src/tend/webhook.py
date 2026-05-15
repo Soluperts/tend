@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """HTTP receiver for external producers.
 
 Exposes:

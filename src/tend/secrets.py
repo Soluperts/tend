@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Secret storage for tend — OS keyring first, $TEND_HOME/.env fallback.
 
 The .env fallback exists because keyring on a headless Pi typically has no

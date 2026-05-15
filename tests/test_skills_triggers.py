@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Coverage for triggers + events + silent_default frontmatter."""
 
 from __future__ import annotations

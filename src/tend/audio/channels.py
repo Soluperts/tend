@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Audio path selection for the Hub pipeline.
 
 This module exposes:

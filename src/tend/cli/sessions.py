@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """`tend sessions ...` — read-only inspection of worker session history."""
 
 from __future__ import annotations

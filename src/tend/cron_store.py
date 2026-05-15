@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Durable JSON-backed storage for scheduled jobs.
 
 Two files under <root>/cron/:

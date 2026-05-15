@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Schedule-watcher: pure logic for parsing event titles and computing
 phase fire times. The orchestrator (run_tick) is in the same module
 but separated from these helpers for clean unit testing.

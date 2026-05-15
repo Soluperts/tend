@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """`tend skills install` — interactive picker for optional shipped skills."""
 
 from __future__ import annotations

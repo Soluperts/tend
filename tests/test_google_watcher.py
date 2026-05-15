@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for tend.google_watcher — pure logic for tag parsing and phase fires."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """ProactiveAnnouncer — single entry point for proactive TTS announcements.
 
 Used by Scheduler, webhook /say, and GeneralWorker. Enforces:

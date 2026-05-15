@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Skill update flow — diff user-installed skills against shipped, back up, overwrite.
 
 Used by the `tend skill update` CLI command (Typer wiring lands in

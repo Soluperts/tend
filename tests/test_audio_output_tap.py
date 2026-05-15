@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for tend.audio.output_tap.OutputAudioCapture."""
 
 from __future__ import annotations

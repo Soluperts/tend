@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Hub drains the announcer when Brain transitions inactive."""
 
 from __future__ import annotations

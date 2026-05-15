@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for tend.audio.channels.select_audio_path."""
 
 from __future__ import annotations

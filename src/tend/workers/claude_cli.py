@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Claude-CLI worker base + helpers.
 
 Workers in this module spawn the `claude` CLI as a subprocess so that API

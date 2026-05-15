@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for skill enumeration across the critical (wheel) + user roots."""
 
 from __future__ import annotations

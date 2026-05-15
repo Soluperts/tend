@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """tend.service — systemd user-unit install/uninstall (Linux paths)."""
 
 from __future__ import annotations

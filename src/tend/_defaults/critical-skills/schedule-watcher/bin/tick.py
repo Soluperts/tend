@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """Schedule-watcher tick — invoked by the SKILL.md.
 
 Reads google config + tend.toml, runs run_tick() against the live

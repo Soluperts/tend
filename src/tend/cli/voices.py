@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """`tend voices` — list, select, and test AVSpeechSynthesizer voices."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for the `tend voices` subcommand."""
 
 from __future__ import annotations

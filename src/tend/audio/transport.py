@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """LocalAudioTransport variants that tap output PCM into the AEC reference buffer.
 
 Why this exists: pipecat's `LocalAudioOutputTransport` is opened in PortAudio

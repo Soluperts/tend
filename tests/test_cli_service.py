@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """`tend service install/uninstall` CLI."""
 
 from __future__ import annotations

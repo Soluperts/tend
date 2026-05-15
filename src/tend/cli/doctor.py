@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """`tend doctor` — read-only diagnostic CLI."""
 
 from __future__ import annotations

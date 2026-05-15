@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Gates that govern the wake/sleep boundary on the audio path.
 
 OpenWakeWordGate sits pre-STT; it drops audio while Brain is inactive (after

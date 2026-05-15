@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """`tend skills ...` and top-level `tend scan-skill`."""
 
 from __future__ import annotations

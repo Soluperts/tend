@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Brain — the conversational LLM agent.
 
 Thin LLMAgent: owns the LLM service and its tools, but not the conversation

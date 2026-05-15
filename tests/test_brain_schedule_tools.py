@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for Brain's scheduling tools (schedule / list / cancel)."""
 
 from __future__ import annotations

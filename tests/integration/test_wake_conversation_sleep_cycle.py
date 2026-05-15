@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Integration: full wake / conversation / sleep cycle through gates + brain state.
 
 Mocks the audio transport, STT, TTS, and the LLM service; asserts that the

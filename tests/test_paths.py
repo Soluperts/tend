@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for tend.paths — single source of truth for filesystem paths."""
 
 from __future__ import annotations

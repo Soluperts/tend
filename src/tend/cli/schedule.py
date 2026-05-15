@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """`tend schedule ...` — manage cron jobs at $TEND_HOME/cron/jobs.json."""
 
 from __future__ import annotations

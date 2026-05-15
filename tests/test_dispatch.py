@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for tend.dispatch.dispatch_event — shared event fan-out helper."""
 
 from __future__ import annotations

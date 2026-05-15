@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """tend.secrets — keyring-first with $TEND_HOME/.env fallback."""
 
 from __future__ import annotations

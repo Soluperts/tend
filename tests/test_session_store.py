@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for SessionStore — atomic JSON index + per-session transcripts."""
 
 import json

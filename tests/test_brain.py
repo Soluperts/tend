@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Tests for Brain — on_task_update publishes context updates to the bus."""
 
 from unittest.mock import AsyncMock, MagicMock

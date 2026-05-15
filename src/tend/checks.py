@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Pure check functions consumed by `tend setup` and `tend doctor`.
 
 Each check returns a CheckResult. The two commands differ only in

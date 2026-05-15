@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Scheduler — proactive job dispatch agent.
 
 Owns wall-clock time. Reads cron job definitions and runtime state from
