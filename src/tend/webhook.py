@@ -104,9 +104,13 @@ class WebhookServer:
             if e.errno in (48, 98):
                 logger.error(
                     f"webhook port {self._host}:{self._port} is already in use. "
-                    f"Something else is listening (commonly VS Code on 7331, or a "
-                    f"stale `python -m tend` process). Stop the conflicting "
-                    f"process, or set [webhook] port in tend.toml to a free port."
+                    f"Most often this is a stale `python -m tend` process from a "
+                    f"previous run. Find the holder with "
+                    f"`lsof -iTCP:{self._port} -sTCP:LISTEN` (macOS/Linux) or "
+                    f"`ss -ltnp 'sport = :{self._port}'` (Linux). Stop the "
+                    f"conflicting process, or set [webhook] port in tend.toml to "
+                    f"a free port (note: external producers must be reconfigured "
+                    f"to match the new port — tend will not silently fall back)."
                 )
                 # Clean up partial state so callers don't see a half-initialized runner.
                 await self._runner.cleanup()

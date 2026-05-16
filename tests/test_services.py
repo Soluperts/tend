@@ -1,12 +1,23 @@
 # SPDX-License-Identifier: MIT
 """Tests for the service factories — preflight + cloud-or-local fallback."""
 
+import sys
 from unittest.mock import MagicMock
 
 import httpx
 import pytest
 
 from tend.config import Settings
+
+
+# `tts_provider="auto"` is platform-dependent — on macOS it resolves to
+# AVSpeechSynthesizer; on Linux it resolves to ElevenLabs-or-Piper. The auto
+# tests here document the Linux shape; macOS auto is covered separately by
+# tests/test_services_make_tts.py.
+_LINUX_AUTO_ONLY = pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason="auto-path TTS on macOS prefers AVSpeechSynthesizer; see test_services_make_tts.py",
+)
 
 
 def _settings(**overrides) -> Settings:
@@ -46,6 +57,7 @@ def test_make_stt_falls_back_to_whisper_on_401(monkeypatch):
 
 # TTS factory --------------------------------------------------------------
 
+@_LINUX_AUTO_ONLY
 def test_make_tts_returns_piper_when_no_elevenlabs_key():
     from tend.services import _make_tts
     s = _settings(elevenlabs_api_key=None, sample_rate=16000)
@@ -54,6 +66,7 @@ def test_make_tts_returns_piper_when_no_elevenlabs_key():
     assert rate == 16000
 
 
+@_LINUX_AUTO_ONLY
 def test_make_tts_returns_elevenlabs_on_healthy_preflight(monkeypatch):
     from tend.services import _make_tts
 
@@ -69,6 +82,7 @@ def test_make_tts_returns_elevenlabs_on_healthy_preflight(monkeypatch):
     assert rate == 16000
 
 
+@_LINUX_AUTO_ONLY
 def test_make_tts_falls_back_when_quota_exhausted(monkeypatch):
     from tend.services import _make_tts
 

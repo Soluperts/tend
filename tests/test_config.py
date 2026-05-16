@@ -105,7 +105,9 @@ def test_webhook_config_defaults_present():
     from tend.config import WebhookConfig
     c = WebhookConfig()
     assert c.host == "127.0.0.1"
-    assert c.port == 7331
+    # 47331 picked deliberately (see config.py): 7331 collides with VS Code's
+    # helper port, which was a recurring first-time-user headache on macOS.
+    assert c.port == 47331
 
 
 def test_announcer_config_defaults_present():

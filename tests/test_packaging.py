@@ -46,7 +46,9 @@ def built_wheel(tmp_path_factory) -> Path:
         check=True,
         capture_output=True,
     )
-    wheels = list(dist.glob("tend-*.whl"))
+    # PEP 427 normalizes hyphens in the distribution name to underscores in
+    # wheel filenames, so `tend-assistant` becomes `tend_assistant-*.whl`.
+    wheels = list(dist.glob("tend_assistant-*.whl"))
     assert len(wheels) == 1, f"expected exactly one wheel, got {wheels}"
     return wheels[0]
 
