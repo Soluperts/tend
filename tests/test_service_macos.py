@@ -52,6 +52,26 @@ def test_install_macos_calls_launchctl_bootstrap(monkeypatch, tmp_path):
     assert calls[0][2] == f"gui/{os.getuid()}"
 
 
+def test_install_macos_falls_back_to_launchctl_load(monkeypatch, tmp_path):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(service, "_is_macos", lambda: True)
+    monkeypatch.setattr(service.paths, "tend_home", lambda: tmp_path)
+    target = tmp_path / "LaunchAgents" / "com.tend.daemon.plist"
+    monkeypatch.setattr(service, "unit_path", lambda: target)
+
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        return MagicMock(returncode=1 if args[1] == "bootstrap" else 0)
+
+    monkeypatch.setattr(service.subprocess, "run", fake_run)
+
+    assert service.install() == target
+    assert calls[0][:2] == ["launchctl", "bootstrap"]
+    assert calls[1] == ["launchctl", "load", str(target)]
+
+
 def test_uninstall_macos_calls_bootout_and_deletes(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(service, "_is_macos", lambda: True)
@@ -136,3 +156,23 @@ gui/501/com.tend.daemon = {
     state, details = service.status()
     assert state == "running"
     assert "com.tend.daemon" in details
+
+
+def test_status_macos_returns_unknown_when_launchctl_print_fails(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(service, "_is_macos", lambda: True)
+    target = tmp_path / "com.tend.daemon.plist"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.touch()
+    monkeypatch.setattr(service, "unit_path", lambda: target)
+    monkeypatch.setattr(
+        service.subprocess, "run",
+        lambda args, **kw: MagicMock(returncode=113, stdout="", stderr="not loaded\n"),
+    )
+
+    state, details = service.status()
+
+    assert state == "unknown"
+    assert details == "not loaded"

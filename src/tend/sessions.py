@@ -105,7 +105,11 @@ class SessionStore:
 
     def list_recent(self, *, limit: int = 10) -> list[SessionEntry]:
         idx = self._read_index()
-        rows = sorted(idx.values(), key=lambda r: r.get("started_at", 0), reverse=True)
+        rows = sorted(
+            (r for r in idx.values() if isinstance(r, dict)),
+            key=lambda r: r.get("started_at", 0),
+            reverse=True,
+        )
         result: list[SessionEntry] = []
         for r in rows[:limit]:
             try:
