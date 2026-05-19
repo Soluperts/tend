@@ -2,6 +2,8 @@
 """Tests for SessionStore — atomic JSON index + per-session transcripts."""
 
 import json
+import os
+
 import pytest
 
 from tend.sessions import SessionEntry, SessionStore
@@ -80,6 +82,29 @@ def test_list_recent_respects_limit(store):
     assert len(rows) == 2
 
 
+def test_list_recent_skips_corrupt_rows(store):
+    (store.root / "sessions.json").write_text(json.dumps({
+        "good": {
+            "session_id": "good",
+            "worker": "w",
+            "request": "r",
+            "status": "done",
+            "started_at": 2,
+            "last_interaction_at": 3,
+            "transcript_path": "good.jsonl",
+        },
+        "missing-required-fields": {
+            "session_id": "bad",
+            "started_at": 1,
+        },
+        "not-a-row": "bad",
+    }))
+
+    rows = store.list_recent(limit=10)
+
+    assert [row.session_id for row in rows] == ["good"]
+
+
 def test_get_returns_entry_or_none(store):
     store.start(session_id="z", worker="w", request="r", cwd=None)
     assert store.get("z") is not None
@@ -98,6 +123,18 @@ def test_atomic_write_recovers_from_corrupt_index(store, tmp_path):
     # Should be treated as empty index, not crash
     rows = store.list_recent(limit=10)
     assert rows == []
+
+
+def test_missing_index_file_is_treated_as_empty(store, tmp_path):
+    (tmp_path / "sessions.json").unlink()
+
+    assert store.list_recent(limit=10) == []
+
+
+def test_invalid_json_index_is_treated_as_empty(store, tmp_path):
+    (tmp_path / "sessions.json").write_text("{not valid json")
+
+    assert store.list_recent(limit=10) == []
 
 
 def test_index_round_trip_via_disk(tmp_path):
@@ -132,3 +169,46 @@ def test_touch_preserves_prior_fields_on_resume(store):
 def test_touch_unknown_session_raises(store):
     with pytest.raises(KeyError):
         store.touch("nope")
+
+
+def test_atomic_write_removes_temp_file_when_replace_fails(store, monkeypatch):
+    before = (store.root / "sessions.json").read_text()
+    removed: list[str] = []
+    original_unlink = os.unlink
+
+    def fail_replace(_src, _dst):
+        raise OSError("disk full")
+
+    def record_unlink(path):
+        removed.append(str(path))
+        original_unlink(path)
+
+    monkeypatch.setattr("tend.sessions.os.replace", fail_replace)
+    monkeypatch.setattr("tend.sessions.os.unlink", record_unlink)
+
+    with pytest.raises(OSError, match="disk full"):
+        store.start(session_id="x", worker="w", request="r", cwd=None)
+
+    assert (store.root / "sessions.json").read_text() == before
+    assert len(removed) == 1
+    assert removed[0].endswith(".tmp")
+
+
+def test_atomic_write_preserves_replace_error_when_temp_cleanup_fails(
+    store, monkeypatch
+):
+    before = (store.root / "sessions.json").read_text()
+
+    def fail_replace(_src, _dst):
+        raise OSError("replace failed")
+
+    def fail_unlink(_path):
+        raise OSError("cleanup failed")
+
+    monkeypatch.setattr("tend.sessions.os.replace", fail_replace)
+    monkeypatch.setattr("tend.sessions.os.unlink", fail_unlink)
+
+    with pytest.raises(OSError, match="replace failed"):
+        store.start(session_id="x", worker="w", request="r", cwd=None)
+
+    assert (store.root / "sessions.json").read_text() == before
