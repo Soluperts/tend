@@ -2,20 +2,27 @@
 
 Where tend is headed. Horizons rather than dates. Updated each minor release.
 
-## Where we are now (v0.1.0-dev)
+## Where we are now (v0.1.0)
 
-tend is a working single-user voice assistant for desk workers, running on Raspberry Pi 5. The core conversational loop (wake → STT → brain → workers → TTS), day-session memory, proactive triggers (scheduler + announcer + webhook), the skills layer with autonomous skill authoring, and full Google Workspace integration via `gws` are all in place. tend currently runs from a git clone via `python -m tend`; it is not yet pip-installable or public. On macOS the audio transport uses AVAudioEngine with VoiceProcessingIO for OS-grade AEC + NS + AGC; software-AEC paths remain available as explicit opt-outs.
+tend is a working single-user voice assistant for desk workers, running on Raspberry Pi 5 or macOS 14+ on Apple Silicon. The core conversational loop (wake → STT → brain → workers → TTS), day-session memory, proactive triggers (scheduler + announcer + webhook), the skills layer with autonomous skill authoring, and full Google Workspace integration via `gws` are all in place. As of 2026-06-02, the public PyPI distribution is `tend-assistant==0.1.0` (`pipx install tend-assistant`); the bare PyPI package name `tend` belongs to a different project. On macOS the audio transport uses AVAudioEngine with VoiceProcessingIO for OS-grade AEC + NS + AGC; software-AEC paths remain available as explicit opt-outs.
 
-## Next: public release (v0.1)
+## Current release follow-ups (v0.1)
 
-Goal: a stranger can install tend tonight and have it working in 10 minutes. Critical path, in dependency order:
+Goal: keep the public `tend-assistant` package healthy while the remaining release-follow-up PRs land. Queue truth refreshed with `gh pr list --repo Soluperts/tend --state open --limit 100` on 2026-06-02:
+
+- #5 `codex/ci-portaudio-dev-package` — CI installs PortAudio headers.
+- #3 `dependabot/github_actions/actions/checkout-6` — actions/checkout bump.
+- #2 `dependabot/github_actions/astral-sh/setup-uv-7` — setup-uv bump.
+- #1 `dependabot/pip/python-minor-and-patch-4eb6eddbdb` — pipecat-ai-subagents dependency bump.
+
+Release follow-up items:
 
 1. **OSS clerical** — ~~`LICENSE`~~ (MIT — Apache-2.0 was the original pick; rationale lives in `docs/conventions.md`), GH templates + `SECURITY.md` + `CONTRIBUTING.md` + dependabot, `pyproject.toml` migrated from setuptools to hatchling, distribution name set to `tend-assistant` (the bare `tend` was taken on PyPI). *Done.* Remaining follow-ups: (a) GitHub repo rename `Soluperts/DeskClaw` → `Soluperts/tend` (manual, via `gh repo rename`); (b) SPDX header sweep across `.py` files. Both are mechanical and tracked separately.
 2. ~~**macOS port**~~ — *Done.* `AVAudioTransport` (`src/tend/audio/av_audio.py`) wraps `AVAudioEngine` with VoiceProcessingIO for OS-grade AEC + NS + AGC; `select_audio_path` picks it on Darwin; `tend service install` writes the launchd plist; the README and `tend setup` cover the install path. Software-AEC paths (Speex/WebRTC-AEC3) remain available as explicit opt-outs.
 3. **Webhook hardening** — HMAC-SHA256 signing, `X-Tend-Timestamp` replay protection, `X-Tend-Delivery-Id` idempotency. *~½ day.*
 4. **SKILL.md frontmatter v2** — add `version`, `min_tend_version`, `requires:`. Cheap now, breaking later. *~½ day.*
 5. ~~**Decouple STT/TTS provider from API-key presence**~~ — *Done.* `tts_provider` (in `Settings`, `config.py:99`) accepts `auto | elevenlabs | avspeech | piper`; `services._make_tts` dispatches on it. The `auto` value preserves the historical key-presence inference for backwards-compatibility.
-6. **Release machinery + docs + README rewrite** — release-please workflow, PyPI Trusted Publishing + Sigstore, mkdocs-Material site, README rewrite with asciinema demo, Homebrew tap. *~2 days.*
+6. **Release machinery + docs follow-ups** — release-please workflow, PyPI Trusted Publishing + Sigstore, mkdocs-Material site, asciinema demo, Homebrew tap. *~2 days.*
 
 Total: ~8.5–10.5 working days. Each item gets a spec under `docs/superpowers/specs/` and a plan under `docs/superpowers/plans/` before implementation, per the existing project convention. Standards every item must follow live in [`docs/conventions.md`](docs/conventions.md).
 

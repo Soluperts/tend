@@ -260,7 +260,7 @@ The repo's `README.md` is the front door. Length sweet spot: 600–900 lines sou
 2. **Badges** — PyPI version, CI, license, Python versions.
 3. **Demo** — 60-second asciinema cast (not GIF — gifs are heavy and unsearchable). Linked from `/assets`.
 4. **What it is** — three paragraphs answering WHY tend exists, not what it does.
-5. **Install** — `pipx install tend` (Linux/Mac) or `brew install ridhwanluthra/tend/tend` (Mac).
+5. **Install** — `pipx install tend-assistant` (Linux/Mac) or `brew install ridhwanluthra/tend/tend` (Mac).
 6. **Quickstart** — three commands from install to wake word.
 7. **How it works** — one architecture diagram, link to internals docs.
 8. **Skills** — the killer feature; show a SKILL.md frontmatter example.
