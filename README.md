@@ -2,6 +2,12 @@
 
 Personal AI assistant for desk workers. Lives on a Raspberry Pi in your workroom; conversational fast loop on the front, slow-loop worker dispatch behind it. Audio in → wake gate → STT → brain → TTS → audio out, built on [Pipecat](https://github.com/pipecat-ai/pipecat) and [pipecat-subagents](https://github.com/pipecat-ai/pipecat-subagents).
 
+Status snapshot, refreshed 2026-06-02: the public PyPI distribution is
+`tend-assistant==0.1.0` (`pipx install tend-assistant`). The bare PyPI package
+name `tend` belongs to a different project. Current open PRs in
+`Soluperts/tend` are #5 (PortAudio CI headers), #3 (actions/checkout bump), #2
+(setup-uv bump), and #1 (pipecat-ai-subagents dependency bump).
+
 The brain is multi-turn within a day-session; conversation context persists across wake/sleep cycles and resets at a configurable wall-clock time (default 04:00 local). Workers (v1 ships one stub: timer/reminder) run independently of the brain — they keep going while the brain is asleep and announce themselves through the speaker when they finish.
 
 ## What you need
