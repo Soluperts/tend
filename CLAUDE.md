@@ -1,269 +1,215 @@
-# tend
+# Agent Operating Guide
 
-Personal AI assistant for desk workers, running on a Raspberry Pi in the user's workroom. Audio I/O, VAD, openWakeWord-driven wake gate, STT, multi-turn brain (Anthropic Claude), worker scaffolding, optional ElevenLabs TTS. The brain dispatches long-running work to subagent workers that announce results autonomously through the speaker.
+This file defines how coding agents should work in this repository.
 
-## Guiding principles
+## Engineering Loop
 
-- **Compose Pipecat and pipecat-subagents.** If a processor, service, transport, agent base class, bus primitive, or activation hook exists upstream, use it. If you think you need a custom one, prove it doesn't exist first.
-- **Privacy by default at the audio boundary.** While the brain is deactivated, the wake gate drops audio frames before STT — no conversation audio reaches Deepgram. Workers running in the background still hit the cloud (the user dispatched them); ambient room conversation does not.
-- **Keep things simple.** No premature abstraction, no speculative extension points, no config knobs for hypothetical needs.
-- **Each unit testable in isolation.** Constructor injection. No module-level singletons. If you can't test a component without spinning up the whole pipeline, the boundary is wrong.
-- **Ask before adding deps.** New runtime dependencies need a real reason.
+Follow this loop:
 
-## Conventions
+Audit → Prioritize → Plan → Implement → Verify → Report
 
-Cross-cutting standards — workspace paths, packaging, CLI structure, bootstrap UX, extension model, webhook security, releases, CI, repo furniture, distribution, macOS specifics, coding style, documentation — live in [`docs/conventions.md`](docs/conventions.md). Read it before making changes that touch any of those domains. If implementation diverges from the doc, fix one of them in the same PR — they're meant to stay in sync.
+Do not skip directly from a vague request to implementation.
 
-## Roadmap
+## Core Principles
 
-Where tend is headed — the public-release critical path (v0.1), post-launch candidates, 1.0 stability criteria, and explicit non-goals — lives in [`ROADMAP.md`](ROADMAP.md). Read it when planning new features or estimating release scope. Update it when an item ships or a candidate gets accepted/rejected.
+* Evidence over guesses
+* Simplicity over ceremony
+* Small changes over heroic rewrites
+* Existing primitives over new abstractions
+* Tests and evals over confidence theater
+* Preservation before cleanup
+* Clear ownership and handoffs
+* Documentation must describe reality
 
-## Architecture (current)
+## Repository Entry
 
-Two pipelines bridged by the in-process bus, matching the canonical pipecat-subagents shape.
+When beginning work:
 
-`Hub` is the always-running transport-owning parent. It owns audio I/O, STT, TTS, and **the conversation context** (`LLMContext` + `LLMContextAggregatorPair`). The user aggregator sits before the bridge; the assistant aggregator sits at the very end of the pipeline (after `transport.output`) — that placement is required, the aggregators are terminal sinks for their frame types and only "see" the LLM's output if TTS is between them.
+* Inspect the current branch
+* Inspect the working tree
+* Check the upstream relationship
+* Identify uncommitted and untracked work
+* Review relevant issues and PRs
+* Locate project entry points
+* Locate tests, evals, CI, and documentation
+* Identify the relevant source of truth
 
-`Brain` is a thin `LLMAgent` child of Hub with `bridged=()`. It contributes `build_llm()`, the `@tool` methods, and `on_task_update`. It does **not** own context — the LLM just processes whatever `LLMContextFrame` arrives via the bus. Brain is deactivated by default; the gates inside Hub's pipeline flip its `active` flag.
+Do not modify files during initial orientation unless the task is trivial and explicitly authorized.
 
-Workers are children of Brain, persistent across wake/sleep, and can publish frames directly to the bus for autonomous notifications.
+## Planning
 
-```
-AgentRunner (in-process AsyncQueueBus)
-├── Hub (BaseAgent, always running) — owns LLMContext + ProactiveAnnouncer ref
-│     pipeline:
-│       transport.in → VAD → OpenWakeWordGate → STT
-│         → InputLatencyLogger → SleepPhraseGate
-│         → user_aggregator → BusBridgeProcessor (unnamed bridge)
-│         → TTS → OutputLatencyLogger → transport.out
-│         → assistant_aggregator
-│     └── Brain (LLMAgent, bridged=(), starts inactive)
-│           pipeline: [LLM]   (default LLMAgent.build_pipeline)
-│           └── GeneralWorker (eager-registered; uses ProactiveAnnouncer)
-└── Scheduler (BaseAgent, peer to Hub) — owns wall-clock + jobs.json/jobs-state.json
+Before non-trivial implementation, create a focused work packet containing:
 
-WebhookServer (aiohttp on 127.0.0.1:7331) — POST /say, /event
-  publishes via the same ProactiveAnnouncer that Scheduler and GeneralWorker use
-```
+* Goal
+* Why it matters
+* Evidence
+* Scope
+* Non-goals
+* Likely files
+* Proposed approach
+* Behavior to preserve
+* Tests and evals
+* Risks
+* Validation commands
+* Definition of done
 
-Frame flow on a turn:
-1. STT → `TranscriptionFrame` → SleepPhraseGate forwards → user_aggregator captures into `LLMContext` → emits `LLMContextFrame` downstream.
-2. `LLMContextFrame` → bridge → bus → Brain.LLM → emits `TextFrame` chunks.
-3. Brain's edge sink → bus → Hub.bridge.on_bus_message → pushes downstream past the bridge.
-4. TTS synthesizes the text chunks into audio → `transport.output` plays it.
-5. assistant_aggregator (terminal) captures the same `TextFrame` chunks back into the shared `LLMContext`.
+Ask for approval before implementation when the work is risky, broad, ambiguous, destructive, or architecture-changing.
 
-Two state machines:
-- **Brain.active** — toggled by the gates. ASLEEP ⇄ AWAKE on wake-word match / sleep-phrase / 30 s silence. After deactivation, OpenWakeWordGate enforces a 1.5 s cooldown (drops audio without running OWW + calls `Model.reset()` to clear oww's prediction history) so the trailing audio of the sleep phrase can't re-fire wake.
-- **Day-session** — owned by `SessionManager`. `Hub.reset_session(soul_text)` flushes `LLMContext` at boot and at the configured wall-clock time (default 04:00 local), or on `@tool start_fresh`.
+## Implementation
 
-Wake/sleep is *attention*. Day-session is *memory*. They don't interact except that an active day-session reset is deferred until Brain is asleep.
+* Make the smallest useful change.
+* Keep the diff focused.
+* Do not fix unrelated issues.
+* Do not silently expand scope.
+* Preserve public behavior unless change is explicitly required.
+* Add tests for important behavior.
+* Add regression tests for bugs.
+* Add evals when AI or agent behavior changes.
+* Update docs when user or developer behavior changes.
 
-On macOS the pipeline diverges slightly: `audio_in_channels=1` and
-no `StereoToMonoLeft`. AEC runs at pipecat's `audio_in_filter` slot
-(default engine: pyaec/Speex). The `OutputAudioCapture` processor sits
-before `transport.output()` to feed the speaker reference signal
-into the AEC's ring buffer. The platform branch lives in
-`audio/channels.py::select_audio_path`. See
-`docs/superpowers/specs/2026-05-13-tend-macos-port-design.md` for
-the full design.
+## Git And Worktree Safety
 
-### Bus-bridge gotcha
+Do not perform destructive Git operations without explicit approval.
 
-The framework's `_BusEdgeProcessor` (which wraps every bridged agent) sends outgoing bus frames **without** a bridge name (`pipecat_subagents/agents/base_agent.py:149`). So a named-bridge filter on `BusBridgeProcessor` would orphan Brain's responses — keep the bridge unnamed (no `bridge=` kwarg) and use `bridged=()` on the child. All canonical examples in pipecat-subagents follow this pattern. Use `exclude_frames=` (not bridge names) to keep specific frame types local; we exclude `TTSSpeakFrame` so wake-word acks ("Yes?") don't broadcast to Brain.
+Never assume a branch, worktree, stash, or untracked file is disposable.
 
-### Skills layer
+Before deleting or consolidating work:
 
-`~/.tend/skills/<name>/SKILL.md` files teach the GeneralWorker how to handle
-recurring requests. At spawn time the worker enumerates the catalog and
-injects compact `<available-skills>` XML into claude's system prompt;
-claude reads the full SKILL.md body via Read on demand. Scripts live in
-`~/.tend/workspace/bin/`. New skills are authored mid-task by claude when
-no existing skill matches; a regex safety scanner gates them, with
-critical findings moved to `~/.tend/skills-quarantined/<name>/` instead of
-being executed. Worker config (model, allowed tools, workspace dir) lives
-under `[workers.general]` in `tend.toml`.
+* Inventory it
+* Determine its purpose
+* Compare it with `main`
+* Identify duplicate or superseding work
+* Preserve anything uncertain
+* Verify tests and CI
+* Require human approval
 
-## Module layout
+## Issue And PR Discipline
 
-```
-src/tend/
-  audio/
-    hub.py         Hub agent — audio + STT/TTS + LLMContext + announcer drain
-    gates.py       OpenWakeWordGate, SleepPhraseGate (calls hub.on_brain_deactivated)
-    logging.py     Input/OutputLatencyLogger (pass-through, debug only)
-  workers/
-    claude_cli.py  ClaudeCliWorker (base — runs `claude` CLI subprocess)
-    general.py     GeneralWorker (skill-driven; silent_default heartbeat mode; routes via announcer)
-  announcer.py     ProactiveAnnouncer — single TTS funnel; cooldown/deferral/urgency
-  brain.py         Brain (thin LLMAgent — build_llm + tools; remind_in wraps schedule)
-  cron_store.py    JSON job store (jobs.json + jobs-state.json)
-  cron_time.py     Pure helpers: parse_when, next_fire_at
-  dispatch.py      Shared event fan-out helper used by webhook + scheduler.
-  google_watcher.py  Schedule-watcher pure logic + run_tick orchestrator.
-  scheduler.py     Scheduler BaseAgent — wall-clock dispatch loop
-  webhook.py       aiohttp /say + /event receiver, token-authed, loopback-only
-  skills.py        Skills layer (frontmatter parser learns triggers/events/silent_default)
-  session.py       SessionManager (soul.md, daily reset → Hub.reset_session)
-  sessions.py      SessionStore (per-worker persistent session metadata)
-  services.py      STT / TTS / brain LLM factories with preflight + fallback
-  preflight.py     `claude` CLI preflight check
-  config.py        Settings (pydantic-settings, TOML + env)
-  cli.py           `tend` CLI — sessions / skills / scan-skill / schedule / webhook test
-  main.py          AgentRunner setup; entry point
-scripts/
-  audio_check.py   Standalone PyAudio mic/speaker sanity probe
-deploy/
-  tend.service     systemd user unit
-soul.md            committed persona / context (loaded into system prompt)
-tend.toml          committed default settings (now includes [scheduler], [webhook], [announcer])
-```
+* Reuse existing issues when possible.
+* Do not create duplicate issues.
+* One focused issue should usually map to one focused PR.
+* Split broad or unrelated work.
+* Use research or decision issues when requirements are unresolved.
+* Do not open a PR until implementation and validation are complete.
 
-## Privacy model
+Every implementation issue should contain:
 
-The wake gate is the privacy boundary. While Brain is deactivated:
-- `OpenWakeWordGate` runs the local oww model, then **drops** `InputAudioRawFrame`s. STT receives zero audio → Deepgram billed zero, no conversation transmitted.
-- Brain's `_BusEdgeProcessor` drops incoming bridge frames when `Brain.active=False` (framework-level — see `base_agent.py:160`). No Anthropic calls.
-- TTS has nothing to synthesize → ElevenLabs billed zero.
-- **Workers continue running** — they hit cloud APIs the user dispatched them against. Their output (TTS announcements, context updates to Hub) flows through anyway.
+* Summary
+* Why it matters
+* Scope
+* Non-goals
+* Acceptance criteria
+* Tests
+* Evals, when relevant
+* Dependencies
+* Risks
+* Definition of done
 
-Auditable: `lsof -p $(pgrep -f tend)` and `journalctl --user -u tend`.
+## Code Quality
 
-## Worker pattern (canonical)
+Look for:
 
-```python
-class MyWorker(BaseAgent):
-    @task
-    async def do_thing(self, message):
-        result = await ...                          # the actual work
-        await self.bus.publish(BusFrameMessage(
-            source=self.name,
-            frame=TTSSpeakFrame("Brief summary."),
-            direction=FrameDirection.DOWNSTREAM,
-        ))
-        await self.send_task_update(message.task_id, {
-            "kind": "announcement",
-            "spoken": "Brief summary.",
-            "context": {...rich detail for follow-ups...},
-        })
-        await self.send_task_response(message.task_id, {"delivered": True})
-```
+* Duplicate logic
+* Dead code
+* Unused imports and dependencies
+* Debug output
+* Temporary files
+* Commented-out code
+* Stale feature flags
+* Misleading names
+* Oversized modules
+* Fragile scripts
+* Unnecessary abstraction layers
 
-Brain dispatches via `request_task` (fire-and-forget) — never `async with self.task(...)` — so the brain isn't blocked on a tool call when it gets deactivated. Worker handles its own output. Brain's `on_task_update` fires regardless of `Brain.active`; it forwards the announcement to Hub's context as an `LLMMessagesAppendFrame` published on the bus, so the next conversation turn includes what was said while asleep.
+Do not declare code dead based only on appearance.
 
-GeneralWorker is the v1 reference: one worker handles every dispatch (Brain's `do_task` tool) and gets capability from skills under `~/.tend/skills/`, rather than each capability requiring a new worker class.
+Check imports, dynamic registration, configuration, tests, builds, scripts, and runtime entry points first.
 
-## Deliberate non-choices for v1 (do not "fix" without asking)
+Refactoring must unlock something concrete.
 
-- **No compaction** of the day-session context. Resets at the wall-clock boundary instead. Will revisit when context size becomes a real problem.
-- **No persistent memory** across days. Each day starts from `soul.md` alone.
-- **No new worker classes per capability.** Calendar / research / planning worker behavior comes from skills authored on demand under `~/.tend/skills/` and run by the single `GeneralWorker`, not from new worker classes.
-- **No camera / vision.** Audio only.
-- **No multi-user.** Single user, single device, no auth.
-- **No dev "always-awake" bypass.** Architecture is honest; iterate by speaking the wake word.
-- **No distributed deployment.** In-process AsyncQueueBus only.
-- **No worker durability across process restart.** systemd brings the process back up clean.
-- **No mid-stream cloud-service failover.** Lose the current turn if STT/TTS fails mid-frame; next turn falls back.
-- **No retry/backoff on failed scheduled jobs.** Recurring jobs wait for next scheduled fire; one-shot jobs delete after a single attempt.
-- **No outbound channel routing.** Scheduler/webhook announcements only go to local TTS in v1; Telegram/SMS delivery is a separate workstream.
-- **No Python wrapper around gws.** Skills shell out to `gws` directly.
-  Wrapping it is rejected as premature abstraction.
-- **Brain has no @tool methods for Google reads.** Calendar / Gmail
-  queries always go through GeneralWorker via `do_task`. ~3-5s extra
-  latency vs. ~300ms cached, traded for architectural coherence.
+## Skills, Workflows, And Automations
 
-## Hardware assumptions
+Use this model:
 
-**Linux / Raspberry Pi:**
-- Raspberry Pi 5.
-- One USB microphone.
-- One speaker (USB or Bluetooth — BT adds ~150-250 ms output latency, not fixable).
-- PortAudio via PipeWire. Exactly one input and one output device.
+* Skills define reusable capabilities.
+* Workflows coordinate skills.
+* Automations trigger workflows.
+* Issues define approved work.
+* PRs deliver focused implementation.
 
-USB mic-arrays like the reSpeaker XVF3800 are typically rate-locked to 16 kHz and PortAudio bypasses PipeWire's resampler, so TTS output is pinned to `settings.sample_rate` (default 16 kHz). ElevenLabs serves PCM at the requested rate; Piper resamples internally from the voice's native rate.
+Every active skill, workflow, or automation should have:
 
-**macOS (Apple Silicon, macOS 14+):**
-- Built-in mic + speaker, or USB mic + speaker. CoreAudio via PortAudio.
-- TTS via `AVSpeechSynthesizer` (built-in, zero-install) or ElevenLabs if key is configured.
-- AEC via pyaec/Speex (default) or WebRTC AEC3 (`pipx inject tend webrtc-audio-processing`).
+* A clear purpose
+* A clear trigger
+* Clear inputs
+* Clear outputs
+* A clear owner
+* A safety boundary
+* A validation method
+* A known consumer
 
-## Running
+Anything lacking these should be fixed, merged, paused, archived, replaced, or removed after approval.
 
-```bash
-# development (Linux and macOS — CoreAudio / PipeWire picked automatically)
-python -m tend
+## Configuration And Secrets
 
-# production — Linux
-systemctl --user enable --now tend
+When Varlock is present:
 
-# production — macOS (after `tend service install`)
-launchctl kickstart gui/$UID/com.tend.daemon
+* Treat its schema as the configuration contract.
+* Prefer Varlock-based runtime and validation paths.
+* Identify legacy configuration paths that bypass it.
+* Never reveal resolved secrets.
+* Never commit secret-bearing files.
+* Report suspected leaks without reproducing values.
 
-# isolate hardware from pipeline issues
-python scripts/audio_check.py speaker   # 1 kHz tone
-python scripts/audio_check.py mic       # 3 s capture
-python scripts/audio_check.py loopback  # record + play back
-```
+## Documentation
 
-Config via `tend.toml` (committed) and `.env` (gitignored, secrets only). See README.
+Documentation is part of the implementation.
 
-Logs: platform log dir (`journalctl --user -u tend` on Linux; `~/Library/Logs/tend/` on macOS). Faults: `tend.faults.log` in the same dir (faulthandler).
+Keep accurate:
 
-## Proactive triggers
+* README files
+* Setup instructions
+* Architecture docs
+* Changelogs
+* Configuration docs
+* Skill and workflow docs
+* Automation docs
+* Testing and eval instructions
 
-The scheduler + announcer + webhook stack lets tend act without being
-asked. Read `docs/superpowers/specs/2026-05-08-tend-proactive-triggers-design.md`
-before editing any of `src/tend/{scheduler,announcer,webhook,cron_store,cron_time}.py`.
+Do not invent changelog history.
 
-- **Voice authoring:** `Brain.schedule(when, request, name)`. `when`
-  accepts cron expressions, `in 30m`-style relatives, ISO timestamps,
-  or `every 30m`.
-- **Skill defaults:** `triggers:` entries in `SKILL.md` frontmatter are
-  inert until the user runs `enable_skill_triggers <skill>` (voice) or
-  edits `~/.tend/cron/jobs.json` while tend is stopped.
-- **External producers:** see `docs/integrating-with-tend.md`. Vision
-  daemon, Gmail webhooks, etc. POST to `127.0.0.1:7331/say` or
-  `/event` with a Bearer token from `TEND_WEBHOOK_TOKEN`.
-- **Cooldown / deferral:** all proactive announcements go through
-  `ProactiveAnnouncer.announce` so they share one cooldown registry
-  (per-category) and queue while Brain is mid-conversation.
-  `urgent=True` bypasses both.
-- **Heartbeat:** an `every 30m` job seeded at first boot dispatches the
-  `heartbeat` skill silently. The skill announces only when there is
-  something genuinely worth saying. Disable with
-  `[scheduler] heartbeat_every = "off"`.
+## Verification
 
-## Google integration
+Run relevant checks after changes.
 
-`gws` (the Google Workspace CLI, npm `@googleworkspace/cli`) handles
-all Google API access. tend wraps nothing — skills shell out to `gws`
-directly. See `docs/google-setup.md` for the one-time setup procedure
-and `docs/superpowers/specs/2026-05-09-tend-google-and-daily-schedule-design.md`
-for the design.
+Report:
 
-Three layers, all skills:
+* Commands run
+* Results
+* Commands not run
+* Reason they were not run
+* Remaining uncertainty
 
-- **Reads:** `briefing`, `meeting-prep`, `mail-triage` skills.
-- **Writes:** `routine-setup` (recurring events) and `schedule-block`
-  (one-off) skills, scoped to a tend-owned calendar via
-  `calendar.app.created` OAuth scope.
-- **Triggers:** `schedule-watcher` skill (heartbeat-fired every 15m)
-  parses bracket-tagged event titles (`[deep-work] Foo`,
-  `[lunch] Bar`) and creates one-shot scheduler jobs at exact phase
-  fire times. Reactive skills like `lunch-prep` and `post-deep-work`
-  subscribe via `events:` frontmatter.
+A task is not complete merely because code was written.
 
-The scheduler supports two job dispatch modes:
+## End Of Session
 
-- Legacy: `payload.request` is sent to the GeneralWorker as a skill
-  request (the existing `do_task` path).
-- Event-mode: `event_kind` + `event_payload` set; dispatched via
-  `dispatch_event` (the same path as `POST /event`), fanning out to
-  all skills with matching `events:` frontmatter.
+Leave the repository easier to resume.
 
-## When in doubt
+Report:
 
-Read the spec: `docs/superpowers/specs/2026-05-05-tend-smart-speaker-design.md`
-and `docs/superpowers/specs/2026-05-07-deskclaw-skills-and-general-worker-design.md`.
-Read the implementation plans: `docs/superpowers/plans/2026-05-05-tend-v1.md` and
-`docs/superpowers/plans/2026-05-07-deskclaw-skills-and-general-worker.md`. If a request conflicts with the principles above, raise it before coding.
+* Current branch and working state
+* Work completed
+* Files changed
+* Validation results
+* Remaining risks
+* Follow-up work
+* Exact recommended next step
+
+
+## Secrets (Varlock)
+
+- Local secrets for agent/tool use live in gitignored plaintext `.env` / `.env.local` (mode `0600`). Varlock owns `.env.schema` + `load`/`run` injection — not macOS Keychain or Touch ID.
+- Agents inspect with `varlock load --agent` and run tools with `varlock run --inject vars -- <command>`.
+- Never `cat` `.env` / `.env.local`, never `printenv` secrets, never `varlock reveal` in agent sessions.
+- Canonical contract docs: `/Users/kk/Code/kk-kb/docs/AGENT-SECRETS-VARLOCK.md`.
